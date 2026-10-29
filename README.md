@@ -202,7 +202,21 @@ npm run latency
 > `app.route("/api/extras", extrasApp)` di `src/index.ts`/graph node yang sesuai, tanpa extras
 > menyentuh state ChatAgent/Durable Object. Tiap fitur punya toggle (lihat `src/extras/config.ts`),
 > unit test (`npm run test:extras`), dan entri eval (`npm run eval:extras` / `evals/extras-eval.yaml`).
-> Bahan untuk halaman `/learn` (level 8 & 9) ada di `docs/extras-learn-notes.md`.
+> Bahan untuk halaman `/learn` ada di `docs/extras-learn-notes.md`. Semua 6 fitur sudah digabung
+> ke SATU titik integrasi (`src/extras/router.ts` → `extrasApp`, diuji end-to-end di
+> `tests/extras/router.test.ts`) — worker inti benar-benar hanya perlu dua baris:
+> `import { extrasApp } from "./extras/router"; app.route("/api/extras", extrasApp);`
+>
+> | # | Fitur | Toggle | Default |
+> |---|---|---|---|
+> | 11.1 | Voice note (STT/TTS) | `FEATURE_VOICE` | ON |
+> | 11.2 | Deteksi bahasa & gaya balasan | `FEATURE_LANG_DETECT` | ON |
+> | 11.3 | Semantic cache + model routing (Kenari) + AI Gateway | `FEATURE_SEMANTIC_CACHE` / `FEATURE_MODEL_ROUTING` / `FEATURE_AI_GATEWAY` | cache OFF, routing ON, gateway OFF |
+> | 11.4 | Cloudflare Workflows SLA/eskalasi | `FEATURE_SLA_WORKFLOW` | ON |
+> | 11.5 | Memori jangka panjang (consent + hak hapus) | `FEATURE_LONG_TERM_MEMORY` | OFF |
+> | 11.6 | Langfuse prompt management + online eval | `FEATURE_PROMPT_MGMT` / `FEATURE_ONLINE_EVAL` | OFF |
+>
+> Total: 77 unit test (`npm run test:extras`) + 22 eval case (`npm run eval:extras`), semua lulus.
 
 ### 11.1 Voice note (STT/TTS) — toggle `FEATURE_VOICE`
 `src/extras/voice/{stt,tts,routes}.ts` + `ui/src/extras/VoiceRecorder.tsx`. Rekam di UI
