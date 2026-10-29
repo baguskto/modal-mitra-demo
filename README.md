@@ -271,5 +271,25 @@ unified — supaya cascade tetap satu sumber kebenaran yang mudah dites unit.
 14 eval case (`evals/extras-eval.yaml`, `npm run eval:extras`) + 18 unit test
 (`tests/extras/cache.test.ts`).
 
-<!-- Subbagian berikutnya (Cloudflare Workflows SLA, memori jangka panjang + PII vault, Langfuse
-     prompt management/online eval) ditambahkan di sini begitu fitur terkait selesai. -->
+### 11.4 Cloudflare Workflows — SLA/eskalasi handoff (toggle `FEATURE_SLA_WORKFLOW`)
+`src/extras/workflows/{decision,slaEscalationWorkflow,routes}.ts`. Beda dengan badge SLA 5 menit
+yang sudah ada di Konsol CS (`sessions_index.sla_due_at`, polling/warna — lihat §3): ini **timer
+durable** (Cloudflare Workflows, bertahan lintas restart/deploy Worker, bukan `setTimeout`) yang
+AKTIF mengecek & bereaksi, tidak menunggu seseorang membuka konsol.
+
+Alur: `POST /api/extras/sla/start {sessionId}` (dipanggil worker inti tepat saat
+`handoff.triggered`, titik yang sudah ada) → `SlaEscalationWorkflow` tidur `SLA_MINUTES` (default
+5) via `step.sleep` → bangun, baca `sessions_index.mode`/`last_sender` (kolom yang **sudah ada**,
+tidak perlu ubah ChatSession/ChatAgent) → bila sesi masih `HUMAN` dan `last_sender` belum pernah
+jadi `'human'` sejak handoff → **eskalasi**: tulis `sla_escalations` (tabel baru, lihat
+`src/db/schema.sql`) + `notifyEscalation` (POST opsional ke `SLA_NOTIFY_WEBHOOK_URL` bila
+dikonfigurasi — tanpa webhook, tetap tercatat jujur di D1 sebagai sumber kebenaran, bukan
+diam-diam "sukses"). `GET /api/extras/sla/escalations?unresolved=true` untuk panel/X-Ray. Event
+X-Ray `sla_timer`/`sla_escalated`.
+
+Logika keputusan (`decision.ts`) dipisah dari kelas `WorkflowEntrypoint` (yang butuh runtime
+`cloudflare:workers`) supaya 100% unit-testable di Node/vitest tanpa `wrangler dev` — 10 unit test
++ 3 eval case.
+
+### 11.5 — 11.6 (memori jangka panjang + PII vault, Langfuse prompt management/online eval)
+<!-- ditambahkan di sini begitu fitur terkait selesai. -->

@@ -31,6 +31,15 @@ binding = "AI"
 name = "CHAT_SESSION"
 class_name = "ChatSession"
 
+# feat/extras — fitur #4 (Cloudflare Workflows SLA/eskalasi handoff, src/extras/workflows/).
+# class_name HARUS diekspor dari entrypoint worker (main) — worker inti cukup
+# `export { SlaEscalationWorkflow } from "./extras/workflows/slaEscalationWorkflow";` di
+# src/index.ts saat menggabungkan.
+[[workflows]]
+binding = "SLA_WORKFLOW"
+name = "modal-mitra-sla-escalation"
+class_name = "SlaEscalationWorkflow"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["ChatSession"]

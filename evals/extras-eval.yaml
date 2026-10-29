@@ -81,3 +81,20 @@ cases:
     type: kenari_model_rejected
     input: "gpt-6-astra"
     expect: true
+
+  # --- Fitur #4: Cloudflare Workflows SLA/eskalasi handoff ---
+  - feature: sla_workflow
+    description: sla_01_cs_never_responded_escalates
+    type: sla_decision_equals
+    session_row: { mode: "HUMAN", last_sender: "ai", handoff_at: "2026-10-30T00:00:00Z" }
+    expect: escalated
+  - feature: sla_workflow
+    description: sla_02_cs_already_responded_resolved
+    type: sla_decision_equals
+    session_row: { mode: "HUMAN", last_sender: "human", handoff_at: "2026-10-30T00:00:00Z" }
+    expect: resolved_in_time
+  - feature: sla_workflow
+    description: sla_03_released_back_to_ai_resolved
+    type: sla_decision_equals
+    session_row: { mode: "AI", last_sender: "ai", handoff_at: "2026-10-30T00:00:00Z" }
+    expect: resolved_in_time

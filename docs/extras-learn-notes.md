@@ -28,5 +28,12 @@ worker `/learn` tidak perlu riset ulang isi fitur-fitur ini.
 - **Pertanyaan interview (30s)**: "Kenapa threshold semantic cache diset 0,92 (tinggi), bukan 0,8?" → Jawab: cache hit yang salah (jawaban keliru tersaji ke pengguna) jauh lebih mahal reputasinya daripada cache miss (paling buruk cuma kembali ke jalur normal) — threshold tinggi sengaja mengorbankan recall demi precision, konsisten dengan prinsip "assertion deterministik, bukan LLM-as-judge" yang sudah dipakai di eval utama.
 - **WOW fact**: provider LLM Kenari (OpenAI-compatible) diukur langsung — tier termurah `deepseek-v4-1-flash` ~2,8s, TIDAK lebih lambat dari Workers AI qwen3 (4,4s p50 end-to-end); allowlist kode menolak model mahal (`gpt-6-astra`, ~10× lebih mahal) sebelum request terkirim.
 
-<!-- Entri berikutnya (Workflows SLA, memori PDP, Langfuse prompt/eval) ditambahkan di sini begitu
-     fitur terkait selesai — lihat commit feat/extras berikutnya. -->
+## Level 6 — Human-in-the-loop: Cloudflare Workflows untuk SLA/eskalasi
+
+- **Analogi 1 kalimat**: "seperti alarm dapur — dipasang begitu makanan masuk oven, tetap berbunyi walau yang masak sudah pindah ruangan atau komputernya restart."
+- **Lihat di demo**: handoff ke CS tanpa CS merespons → setelah 5 menit, X-Ray menyalakan `sla_escalated`, muncul di panel eskalasi (`GET /api/extras/sla/escalations`).
+- **Pertanyaan interview (30s)**: "Kenapa harus Cloudflare Workflows, bukan `setTimeout`/`alarm` Durable Object biasa?" → Jawab: Workflows adalah primitif durable BAWAAN (checkpoint tiap `step`, retry otomatis, survive restart/deploy Worker) — cocok untuk timer yang HARUS menyala walau Worker/DO yang memulainya sudah tidak hidup lagi; `setTimeout` di Worker hilang begitu instance berhenti.
+- **WOW fact**: keputusan eskalasi (`decideEscalation`) dipisah murni dari runtime Workflow sehingga 100% dites di Node tanpa `wrangler dev` — 10 unit test + 3 eval case, 0 biaya tambahan (dalam limit free tier Workflows).
+
+<!-- Entri berikutnya (memori PDP, Langfuse prompt/eval) ditambahkan di sini begitu fitur terkait
+     selesai — lihat commit feat/extras berikutnya. -->

@@ -148,3 +148,17 @@ CREATE INDEX IF NOT EXISTS idx_mitra_majelis ON mitra(majelis_id);
 CREATE INDEX IF NOT EXISTS idx_tickets_actor ON tickets(actor_id);
 CREATE INDEX IF NOT EXISTS idx_audit_session ON audit_log(session_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_mode ON sessions_index(mode);
+
+-- feat/extras — fitur #4 (Cloudflare Workflows SLA/eskalasi handoff). Dicatat terpisah dari
+-- `tickets` (SLA pengaduan multi-hari) & `sessions_index.sla_due_at` (badge 5 menit di konsol) —
+-- tabel ini mencatat HASIL cek durable timer: apakah CS benar-benar merespons (sessions_index.
+-- last_sender berubah jadi 'human') dalam N menit sejak handoff, atau terlewat (escalated).
+CREATE TABLE IF NOT EXISTS sla_escalations (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  sla_minutes INTEGER NOT NULL,
+  outcome TEXT NOT NULL,           -- 'resolved_in_time' | 'escalated'
+  reason TEXT,
+  checked_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_sla_escalations_session ON sla_escalations(session_id);

@@ -8,13 +8,15 @@ import { parse } from "yaml";
 import { detectLanguage } from "../src/extras/language";
 import { estimateComplexity } from "../src/extras/cache/modelRouter";
 import { KENARI_ALLOWED_MODELS } from "../src/extras/cache/kenariProvider";
+import { decideEscalation, type SessionRow } from "../src/extras/workflows/decision";
 
 interface Case {
   feature: string;
   description: string;
   type: string;
-  input: string;
+  input?: string;
   step_index?: number;
+  session_row?: SessionRow;
   expect: string | number | boolean;
 }
 
@@ -26,17 +28,21 @@ const cases: Case[] = config.cases;
 function runCase(c: Case): { pass: boolean; actual?: string; reason?: string } {
   switch (c.type) {
     case "language_equals": {
-      const actual = detectLanguage(c.input).language;
+      const actual = detectLanguage(c.input ?? "").language;
       return { pass: actual === c.expect, actual };
     }
     case "complexity_starts_tier": {
-      const complexity = estimateComplexity(c.input, c.step_index ?? 0);
+      const complexity = estimateComplexity(c.input ?? "", c.step_index ?? 0);
       const actual = COMPLEXITY_START_TIER[complexity];
       return { pass: actual === c.expect, actual: String(actual) };
     }
     case "kenari_model_rejected": {
       const actual = !KENARI_ALLOWED_MODELS.includes(c.input as any);
       return { pass: actual === c.expect, actual: String(actual) };
+    }
+    case "sla_decision_equals": {
+      const actual = decideEscalation(c.session_row ?? null, 5).outcome;
+      return { pass: actual === c.expect, actual };
     }
     default:
       return { pass: false, reason: `unknown assertion type: ${c.type}` };
