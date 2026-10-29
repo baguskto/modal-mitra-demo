@@ -15,7 +15,9 @@
     "seed:remote": "wrangler d1 execute modal_mitra_db --remote --file=data/synthetic/seed.sql",
     "ingest:remote": "tsx scripts/run-ingest.ts",
     "eval": "tsx scripts/run-eval.ts",
-    "latency": "tsx scripts/measure-latency.ts"
+    "latency": "tsx scripts/measure-latency.ts",
+    "test:extras": "vitest run tests/extras",
+    "eval:extras": "tsx scripts/run-extras-eval.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20251020.0",
@@ -27,7 +29,8 @@
     "typescript": "^5.6.3",
     "vite": "^5.4.11",
     "vitest": "^1.6.1",
-    "wrangler": "^3.90.0"
+    "wrangler": "^3.90.0",
+    "yaml": "^2.9.1"
   },
   "dependencies": {
     "hono": "^4.6.14",

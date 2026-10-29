@@ -186,3 +186,37 @@ npm run latency
 - Pendana: `PND-0001` (lahir `1992-01-15`, Andi Pratama), `PND-0002` (`1988-09-09`, Budi Hartono)
 
 **Catatan memori laptop**: hanya jalankan satu proses dev server sesuai aturan laptop 18GB; untuk demo, cukup pakai URL yang sudah dideploy.
+
+---
+
+## 11. Fitur tambahan (`feat/extras`, dikerjakan paralel di worktree terpisah)
+
+> Dikerjakan di branch `feat/extras` (worktree sendiri) selagi worker inti membangun
+> AIChatAgent/LangGraph/Langfuse (v2) di branch utama, sebagai modul **mandiri** (`src/extras/**`)
+> dengan antarmuka jelas supaya digabung tanpa konflik besar: worker inti hanya perlu
+> `app.route("/api/extras", extrasApp)` di `src/index.ts`/graph node yang sesuai, tanpa extras
+> menyentuh state ChatAgent/Durable Object. Tiap fitur punya toggle (lihat `src/extras/config.ts`),
+> unit test (`npm run test:extras`), dan entri eval (`npm run eval:extras` / `evals/extras-eval.yaml`).
+> Bahan untuk halaman `/learn` (level 8 & 9) ada di `docs/extras-learn-notes.md`.
+
+### 11.1 Voice note (STT/TTS) — toggle `FEATURE_VOICE`
+`src/extras/voice/{stt,tts,routes}.ts` + `ui/src/extras/VoiceRecorder.tsx`. Rekam di UI
+(`MediaRecorder`) → `POST /api/extras/voice/transcribe` → Whisper Workers AI
+(`@cf/openai/whisper-large-v3-turbo`) → teks masuk alur chat seperti pesan biasa (redaksi PII tetap
+berlaku di guard input seperti biasa, di luar modul ini). Balasan suara opsional
+(`POST /api/extras/voice/speak`) mencoba model TTS Workers AI yang dikonfigurasi (`TTS_MODEL`); bila
+gagal/tidak tersedia untuk Bahasa Indonesia (belum ada model TTS Workers AI yang terverifikasi bagus
+untuk id — dicatat jujur, bukan ditebak), degradasi otomatis ke **Web Speech API** browser
+(`speechSynthesis`, `lang="id-ID"`) di sisi klien. Event X-Ray: `stt`, `tts`.
+
+### 11.2 Deteksi bahasa & gaya balasan — toggle `FEATURE_LANG_DETECT`
+`src/extras/language/{detect,style,index}.ts`. Heuristik leksikon/regex (bukan model klasifikasi —
+lihat `docs/extras-learn-notes.md` untuk alasannya) untuk Indonesia formal/informal, Jawa ringan,
+Sunda ringan. `detectAndStyle(text)` mengembalikan instruksi gaya untuk ditempel ke system prompt
+(`buildSystemPrompt`) + event X-Ray `lang_detect`. Istilah keuangan/regulasi/angka TETAP Bahasa
+Indonesia baku di semua gaya (akurasi > lokalitas). Diuji 10 kalimat (`evals/extras-eval.yaml`,
+`npm run eval:extras`), 0 panggilan network.
+
+<!-- Subbagian berikutnya (semantic cache/model routing/AI Gateway, Cloudflare Workflows SLA,
+     memori jangka panjang + PII vault, Langfuse prompt management/online eval) ditambahkan di sini
+     begitu fitur terkait selesai. -->
