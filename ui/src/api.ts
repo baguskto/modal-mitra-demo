@@ -47,6 +47,46 @@ export async function getAuditLog(sessionId: string) {
   return res.json();
 }
 
+// HITL four-eyes (integritas data §Security) — restrukturisasi/keringanan menunggu persetujuan CS.
+export async function listHitlPending() {
+  return csGetList(`/api/cs/hitl/pending`);
+}
+export async function approveHitl(restruId: string) {
+  const res = await fetch(`/api/cs/hitl/${encodeURIComponent(restruId)}/approve`, { method: "POST", headers: csHeaders() });
+  return res.json();
+}
+export async function rejectHitl(restruId: string, note?: string) {
+  const res = await fetch(`/api/cs/hitl/${encodeURIComponent(restruId)}/reject`, { method: "POST", headers: { ...csHeaders(), "content-type": "application/json" }, body: JSON.stringify({ note }) });
+  return res.json();
+}
+
+// Panel admin (Presenter-only di UI) — kill-switch per tool. Admin key terpisah dari CS_TOKEN.
+function getAdminKey(): string {
+  let key = sessionStorage.getItem("mmk_admin_key");
+  if (!key) {
+    key = window.prompt("Admin key (panel Presenter):") ?? "";
+    sessionStorage.setItem("mmk_admin_key", key);
+  }
+  return key;
+}
+export async function listKillSwitches() {
+  const res = await fetch(`/api/admin/kill-switch`, { headers: { "x-admin-key": getAdminKey() } });
+  if (!res.ok) { sessionStorage.removeItem("mmk_admin_key"); return []; }
+  return res.json();
+}
+export async function tamperDemo(sessionId: string) {
+  const res = await fetch(`/api/admin/tamper-demo/${encodeURIComponent(sessionId)}`, { method: "POST", headers: { "x-admin-key": getAdminKey() } });
+  return res.json();
+}
+export async function setKillSwitch(toolName: string, disabled: boolean) {
+  const res = await fetch(`/api/admin/kill-switch/${encodeURIComponent(toolName)}`, {
+    method: "POST",
+    headers: { "x-admin-key": getAdminKey(), "content-type": "application/json" },
+    body: JSON.stringify({ disabled, reason: disabled ? "demo kill-switch" : undefined }),
+  });
+  return res.json();
+}
+
 function wsBaseUrl(): string {
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
   return `${proto}//${window.location.host}`;

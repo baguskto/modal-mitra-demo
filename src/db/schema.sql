@@ -101,7 +101,7 @@ CREATE TABLE IF NOT EXISTS restructuring_requests (
   mitra_id TEXT,
   pinjaman_no TEXT,
   reason TEXT,
-  status TEXT NOT NULL DEFAULT 'submitted', -- submitted | under_review | approved | rejected
+  status TEXT NOT NULL DEFAULT 'submitted', -- pending_cs_approval | submitted | under_review | approved | rejected (lihat four-eyes §Security)
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -114,6 +114,33 @@ CREATE TABLE IF NOT EXISTS audit_log (
   payload TEXT NOT NULL,           -- JSON, PII sudah diredaksi sebelum ditulis
   prev_hash TEXT NOT NULL,
   hash TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Integritas data (v2): kill-switch per tool, deteksi anomali permintaan beruntun/bulk, dan
+-- riwayat status (versioning ringan) untuk record yang butuh jejak perubahan (restrukturisasi dkk).
+CREATE TABLE IF NOT EXISTS tool_kill_switch (
+  tool_name TEXT PRIMARY KEY,
+  disabled INTEGER NOT NULL DEFAULT 0,
+  reason TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS tool_rate_window (
+  actor_key TEXT NOT NULL,   -- verified_actor_id jika ada, else session_id (sebelum verifikasi)
+  tool_name TEXT NOT NULL,
+  window_start TEXT NOT NULL, -- jam dibulatkan ke menit (lihat tools/execute.ts)
+  count INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (actor_key, tool_name, window_start)
+);
+
+CREATE TABLE IF NOT EXISTS record_versions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  record_type TEXT NOT NULL, -- restructuring_request | ticket | dsr_request
+  record_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  changed_by TEXT NOT NULL,  -- 'ai' | 'cs' | 'system'
+  note TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

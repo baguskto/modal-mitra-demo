@@ -1,5 +1,7 @@
 import { Hono } from "hono";
 import { ChatAgent } from "./do/ChatAgent";
+import { signPresenterToken, verifyPresenterToken, readCookie, presenterCookieHeader, clearPresenterCookieHeader } from "./security/presenter";
+import { checkIpRateLimit } from "./security/rateLimit";
 
 export { ChatAgent };
 
@@ -19,6 +21,7 @@ export interface Env {
   LANGFUSE_PUBLIC_KEY?: string;
   LANGFUSE_SECRET_KEY?: string;
   KENARI_API_KEY?: string;
+  AUDIT_HMAC_KEY?: string;
 }
 
 const app = new Hono<{ Bindings: Env }>();
@@ -38,6 +41,50 @@ async function requireCsToken(c: any, next: () => Promise<void>) {
 app.use("/api/cs/*", requireCsToken);
 app.use("/api/audit/*", requireCsToken);
 app.use("/api/chat/:sessionId/history", requireCsToken);
+
+// Mode Publik vs Presenter (visibility-rules.md, WAJIB) — cookie HttpOnly bertanda, bukan
+// passphrase mentah (lihat security/presenter.ts). `isPresenter` dipakai untuk (a) membebaskan
+// rate limit publik di bawah, (b) endpoint /api/presenter/status yang dibaca frontend untuk
+// menyembunyikan/menampilkan panel admin, link Langfuse, dll (lihat ui/src/PresenterContext.tsx).
+async function isPresenter(c: any): Promise<boolean> {
+  const token = readCookie(c.req.header("cookie"), "mmk_presenter");
+  return verifyPresenterToken(c.env.PRESENTER_KEY, token);
+}
+
+app.post("/api/presenter/login", async (c) => {
+  const body = await c.req.json<{ key: string }>().catch(() => ({ key: "" }));
+  if (!c.env.PRESENTER_KEY || body.key !== c.env.PRESENTER_KEY) {
+    return c.json({ ok: false }, 401);
+  }
+  const token = await signPresenterToken(c.env.PRESENTER_KEY);
+  const secure = new URL(c.req.url).protocol === "https:";
+  c.header("set-cookie", presenterCookieHeader(token, secure));
+  return c.json({ ok: true });
+});
+
+app.post("/api/presenter/logout", async (c) => {
+  const secure = new URL(c.req.url).protocol === "https:";
+  c.header("set-cookie", clearPresenterCookieHeader(secure));
+  return c.json({ ok: true });
+});
+
+app.get("/api/presenter/status", async (c) => {
+  return c.json({ presenter: await isPresenter(c) });
+});
+
+// Rate limit kasar per-IP untuk pengunjung publik (bukan presenter) pada jalur yang memanggil
+// LLM/embedding (Kenari/Workers AI) — lindungi kuota setelah demo dibagikan ke pewawancara.
+async function publicRateLimit(c: any, next: () => Promise<void>) {
+  if (await isPresenter(c)) return next();
+  const ip = c.req.header("cf-connecting-ip") ?? "unknown";
+  const { ok } = await checkIpRateLimit(c.env.DB, ip, "chat", 40);
+  if (!ok) {
+    return c.json({ error: "Terlalu banyak permintaan dari alamat ini, coba lagi beberapa menit lagi (demo publik dibatasi untuk menjaga kuota)." }, 429);
+  }
+  await next();
+}
+app.use("/api/chat/:sessionId/ws", publicRateLimit);
+app.use("/api/chat/:sessionId/message", publicRateLimit);
 
 function getDO(env: Env, sessionId: string) {
   const id = env.CHAT_AGENT.idFromName(sessionId);
@@ -131,6 +178,31 @@ app.get("/api/cs/sessions", async (c) => {
   return c.json(rows.results);
 });
 
+// HITL four-eyes (integritas data §Security): restrukturisasi/keringanan dicatat AI sebagai
+// 'pending_cs_approval' (src/tools/execute.ts) — HARUS disetujui/ditolak CS di sini sebelum
+// berstatus 'submitted' dan diteruskan ke petugas lapangan/tim kredit.
+app.get("/api/cs/hitl/pending", async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT restru_id, mitra_id, pinjaman_no, reason, created_at FROM restructuring_requests WHERE status = 'pending_cs_approval' ORDER BY created_at ASC`,
+  ).all();
+  return c.json(rows.results);
+});
+
+app.post("/api/cs/hitl/:restruId/approve", async (c) => {
+  const restruId = c.req.param("restruId");
+  await c.env.DB.prepare(`UPDATE restructuring_requests SET status = 'submitted' WHERE restru_id = ? AND status = 'pending_cs_approval'`).bind(restruId).run();
+  await c.env.DB.prepare(`INSERT INTO record_versions (record_type, record_id, status, changed_by, note) VALUES ('restructuring_request', ?, 'submitted', 'cs', 'four-eyes approve')`).bind(restruId).run();
+  return c.json({ ok: true, status: "submitted" });
+});
+
+app.post("/api/cs/hitl/:restruId/reject", async (c) => {
+  const restruId = c.req.param("restruId");
+  const body = await c.req.json<{ note?: string }>().catch(() => ({}) as { note?: string });
+  await c.env.DB.prepare(`UPDATE restructuring_requests SET status = 'rejected' WHERE restru_id = ? AND status = 'pending_cs_approval'`).bind(restruId).run();
+  await c.env.DB.prepare(`INSERT INTO record_versions (record_type, record_id, status, changed_by, note) VALUES ('restructuring_request', ?, 'rejected', 'cs', ?)`).bind(restruId, body.note ?? null).run();
+  return c.json({ ok: true, status: "rejected" });
+});
+
 app.get("/api/audit/:sessionId/verify", async (c) => {
   const sessionId = c.req.param("sessionId");
   const stub = getDO(c.env, sessionId);
@@ -179,6 +251,45 @@ app.post("/api/admin/ingest", async (c) => {
     inserted += 1;
   }
   return c.json({ ok: true, inserted });
+});
+
+// Kill-switch per tool (integritas data §Security) — mode Presenter-only di UI, tapi tetap
+// dilindungi x-admin-key (BUKAN CS_TOKEN) seperti endpoint admin lain.
+app.post("/api/admin/kill-switch/:toolName", async (c) => {
+  const key = c.req.header("x-admin-key");
+  if (!c.env.ADMIN_KEY || key !== c.env.ADMIN_KEY) return c.json({ error: "unauthorized" }, 401);
+  const toolName = c.req.param("toolName");
+  const body = await c.req.json<{ disabled: boolean; reason?: string }>();
+  await c.env.DB.prepare(
+    `INSERT INTO tool_kill_switch (tool_name, disabled, reason, updated_at) VALUES (?, ?, ?, datetime('now'))
+     ON CONFLICT(tool_name) DO UPDATE SET disabled = excluded.disabled, reason = excluded.reason, updated_at = datetime('now')`,
+  )
+    .bind(toolName, body.disabled ? 1 : 0, body.reason ?? null)
+    .run();
+  return c.json({ ok: true, toolName, disabled: body.disabled });
+});
+
+app.get("/api/admin/kill-switch", async (c) => {
+  const key = c.req.header("x-admin-key");
+  if (!c.env.ADMIN_KEY || key !== c.env.ADMIN_KEY) return c.json({ error: "unauthorized" }, 401);
+  const rows = await c.env.DB.prepare(`SELECT tool_name, disabled, reason, updated_at FROM tool_kill_switch`).all();
+  return c.json(rows.results);
+});
+
+// Demo tamper (HANYA untuk mendemonstrasikan "Verifikasi integritas log" mendeteksi perubahan —
+// lihat README §Security): mengubah SATU baris audit_log TANPA lewat appendAuditLog (jadi hash
+// HMAC-nya tidak dihitung ulang) -> verifyChain() akan melaporkan RUSAK mulai dari baris itu.
+// Hanya menyentuh kolom `payload`, dilindungi x-admin-key, data sintetis semata.
+app.post("/api/admin/tamper-demo/:sessionId", async (c) => {
+  const key = c.req.header("x-admin-key");
+  if (!c.env.ADMIN_KEY || key !== c.env.ADMIN_KEY) return c.json({ error: "unauthorized" }, 401);
+  const sessionId = c.req.param("sessionId");
+  const row = await c.env.DB.prepare(`SELECT seq FROM audit_log WHERE session_id = ? ORDER BY seq ASC LIMIT 1`).bind(sessionId).first<{ seq: number }>();
+  if (!row) return c.json({ error: "sesi tidak punya audit log" }, 404);
+  await c.env.DB.prepare(`UPDATE audit_log SET payload = ? WHERE session_id = ? AND seq = ?`)
+    .bind(JSON.stringify({ tampered_for_demo: true, at: new Date().toISOString() }), sessionId, row.seq)
+    .run();
+  return c.json({ ok: true, tamperedSeq: row.seq, note: "Klik 'Verifikasi integritas log' sekarang — harus melaporkan rusak mulai baris ini." });
 });
 
 // Fallback: serve static UI (React SPA) untuk semua rute non-/api.

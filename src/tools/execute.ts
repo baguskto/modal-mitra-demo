@@ -23,12 +23,66 @@ function slaDaysFor(severity: string): number {
   return 10; // default ringkasan SOP (lihat kb sop-pengaduan — tandai "perlu dicek")
 }
 
+// Integritas data v2: kill-switch per tool (dicek di SETIAP pemanggilan, baris `tool_kill_switch`
+// di-toggle lewat endpoint admin — lihat README §Security) + deteksi anomali permintaan
+// beruntun/bulk (jendela geser per menit, ambang per tool). Keduanya FAIL-CLOSED (gagal baca D1 ->
+// anggap diblokir untuk tool TULIS, tapi tidak untuk tool BACA — lihat alasan di checkAnomalyRate).
+const ANOMALY_WINDOW_MINUTES = 5;
+const ANOMALY_THRESHOLD: Partial<Record<ToolName, number>> = {
+  get_angsuran: 10,
+  get_majelis_info: 10,
+  get_portofolio: 10,
+  create_complaint_ticket: 5,
+  create_dsr_request: 5,
+  create_restructuring_request: 3,
+};
+
+async function checkKillSwitch(db: D1Database, toolName: ToolName): Promise<string | null> {
+  try {
+    const row = await db.prepare(`SELECT disabled, reason FROM tool_kill_switch WHERE tool_name = ?`).bind(toolName).first<{ disabled: number; reason: string | null }>();
+    if (row?.disabled) return row.reason || `Tool '${toolName}' dinonaktifkan sementara (kill-switch aktif) — hubungi CS.`;
+    return null;
+  } catch {
+    return null; // tabel belum ada (DB lama) -> jangan jatuhkan seluruh giliran demi fitur keamanan tambahan
+  }
+}
+
+/** @returns true bila MASIH dalam batas wajar, false bila melewati ambang (harus diblokir). */
+async function checkAnomalyRate(db: D1Database, actorKey: string, toolName: ToolName): Promise<boolean> {
+  const limit = ANOMALY_THRESHOLD[toolName];
+  if (!limit) return true;
+  const bucketMs = ANOMALY_WINDOW_MINUTES * 60_000;
+  const windowStart = new Date(Math.floor(Date.now() / bucketMs) * bucketMs).toISOString();
+  try {
+    await db
+      .prepare(
+        `INSERT INTO tool_rate_window (actor_key, tool_name, window_start, count) VALUES (?, ?, ?, 1)
+         ON CONFLICT(actor_key, tool_name, window_start) DO UPDATE SET count = count + 1`,
+      )
+      .bind(actorKey, toolName, windowStart)
+      .run();
+    const row = await db.prepare(`SELECT count FROM tool_rate_window WHERE actor_key=? AND tool_name=? AND window_start=?`).bind(actorKey, toolName, windowStart).first<{ count: number }>();
+    return (row?.count ?? 0) <= limit;
+  } catch {
+    return true; // tabel belum ada (DB lama) -> fail-open, jangan jatuhkan giliran
+  }
+}
+
 export async function executeTool(
   db: D1Database,
   toolName: ToolName,
   args: Record<string, any>,
   ctx: SessionAuthContext,
 ): Promise<{ ok: boolean; data?: any; error?: string }> {
+  const killReason = await checkKillSwitch(db, toolName);
+  if (killReason) return { ok: false, error: killReason };
+
+  const actorKey = ctx.verifiedActorId ?? `session:${ctx.sessionId}`;
+  const withinLimit = await checkAnomalyRate(db, actorKey, toolName);
+  if (!withinLimit) {
+    return { ok: false, error: `Terdeteksi permintaan '${toolName}' beruntun tidak wajar dalam waktu singkat — dibatasi sementara demi keamanan. Hubungi CS bila ini bukan aktivitas Anda.` };
+  }
+
   switch (toolName) {
     case "verify_mitra": {
       const row = await db
@@ -124,14 +178,26 @@ export async function executeTool(
     }
 
     case "create_restructuring_request": {
+      // Four-eyes (integritas data v2): restrukturisasi mengubah syarat pinjaman -> AI HANYA
+      // mencatat berstatus 'pending_cs_approval', BUKAN langsung 'submitted'. CS harus
+      // approve/reject di Konsol CS (lihat endpoint /api/cs/hitl/*) sebelum lanjut ke tim
+      // kredit/petugas lapangan — tiket pengaduan/DSR TIDAK butuh gate ini (append-only,
+      // sudah ditinjau manusia di alur SOP masing-masing, risiko lebih rendah).
       if (ctx.actorType !== "mitra" || !ctx.verifiedActorId) return { ok: false, error: "Identitas mitra belum terverifikasi." };
       const restruId = `RST-${Date.now().toString(36).toUpperCase()}`;
       const loanRow = await db.prepare(`SELECT pinjaman_no FROM pinjaman WHERE mitra_id = ? ORDER BY tanggal_mulai DESC LIMIT 1`).bind(ctx.verifiedActorId).first<{ pinjaman_no: string }>();
       await db
-        .prepare(`INSERT INTO restructuring_requests (restru_id, mitra_id, pinjaman_no, reason, status) VALUES (?, ?, ?, ?, 'submitted')`)
+        .prepare(`INSERT INTO restructuring_requests (restru_id, mitra_id, pinjaman_no, reason, status) VALUES (?, ?, ?, ?, 'pending_cs_approval')`)
         .bind(restruId, ctx.verifiedActorId, loanRow?.pinjaman_no ?? null, args.reason)
         .run();
-      return { ok: true, data: { restru_id: restruId, status: "submitted", note: "Permintaan restrukturisasi dicatat untuk ditinjau petugas lapangan/tim kredit. TIDAK ada keputusan otomatis." } };
+      await db
+        .prepare(`INSERT INTO record_versions (record_type, record_id, status, changed_by, note) VALUES ('restructuring_request', ?, 'pending_cs_approval', 'ai', ?)`)
+        .bind(restruId, args.reason?.slice(0, 200) ?? null)
+        .run();
+      return {
+        ok: true,
+        data: { restru_id: restruId, status: "pending_cs_approval", note: "Permintaan restrukturisasi dicatat, MENUNGGU persetujuan CS (four-eyes) sebelum diteruskan ke petugas lapangan/tim kredit. TIDAK ada keputusan otomatis." },
+      };
     }
 
     case "handoff_to_human": {

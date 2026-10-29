@@ -20,7 +20,7 @@ import type { Connection, ConnectionContext, WSMessage } from "agents";
 
 import { runAgentGraph, relayFinalText, type AgentEnvBindings } from "../agent/graph";
 import { callChatModel } from "../agent/llm";
-import { appendAuditLog, verifyChain } from "../obs/audit";
+import { appendAuditLog, verifyChain, configureAuditHmac } from "../obs/audit";
 import { startTrace, pseudonymize, type LangfuseConfig, type XrayEvent } from "../obs/langfuse";
 import type { Persona } from "../agent/router";
 
@@ -31,6 +31,7 @@ export interface ChatAgentEnv extends AgentEnvBindings {
   LANGFUSE_PUBLIC_KEY?: string;
   LANGFUSE_SECRET_KEY?: string;
   PRESENTER_KEY?: string;
+  AUDIT_HMAC_KEY?: string;
 }
 
 interface SessionMeta {
@@ -79,6 +80,10 @@ export class ChatAgent extends AIChatAgent<ChatAgentEnv, SessionMeta> {
     handoffSummary: null,
     handoffAt: null,
   };
+
+  onStart() {
+    configureAuditHmac(this.env.AUDIT_HMAC_KEY);
+  }
 
   private langfuseConfig(): LangfuseConfig | null {
     const { LANGFUSE_BASE_URL, LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY } = this.env;
