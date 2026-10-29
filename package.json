@@ -15,7 +15,9 @@
     "seed:remote": "wrangler d1 execute modal_mitra_db --remote --file=data/synthetic/seed.sql",
     "ingest:remote": "tsx scripts/run-ingest.ts",
     "eval": "tsx scripts/run-eval.ts",
-    "latency": "tsx scripts/measure-latency.ts"
+    "latency": "tsx scripts/measure-latency.ts",
+    "eval:langfuse:push": "tsx scripts/push-golden-to-langfuse.ts",
+    "eval:langfuse:run": "tsx scripts/run-langfuse-eval.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20251020.0",

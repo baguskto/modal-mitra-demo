@@ -54,7 +54,7 @@ export default function App() {
         </div>
       </div>
       <div className="content">
-        {tab === "chat" && <ChatPanel sessionId={sessionId} />}
+        {tab === "chat" && <ChatPanel sessionId={sessionId} presenter={presenter} />}
         {tab === "cs" && <CsConsole presenter={presenter} />}
         {tab === "dash" && <Dashboard />}
       </div>

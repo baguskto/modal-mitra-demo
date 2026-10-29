@@ -371,6 +371,7 @@ export class ChatAgent extends AIChatAgent<ChatAgentEnv, SessionMeta> {
         modelUsed: result.modelUsed,
         blockedByGuard: result.blockedByGuard,
         timing: result.timing,
+        traceId: trace.traceId,
       });
     }
 

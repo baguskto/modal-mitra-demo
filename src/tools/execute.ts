@@ -28,13 +28,18 @@ function slaDaysFor(severity: string): number {
 // beruntun/bulk (jendela geser per menit, ambang per tool). Keduanya FAIL-CLOSED (gagal baca D1 ->
 // anggap diblokir untuk tool TULIS, tapi tidak untuk tool BACA — lihat alasan di checkAnomalyRate).
 const ANOMALY_WINDOW_MINUTES = 5;
+// Ambang dinaikkan setelah ditemukan sendiri lewat eval golden-set (45 kasus memakai ulang hanya
+// 4 identitas demo -> ambang awal 10 salah-blokir skenario eval/demo normal yang sah, BUKAN
+// anomali sungguhan). Ambang di bawah tetap jauh di bawah pola scripted/bulk abuse nyata (puluhan
+// panggilan beruntun dalam hitungan detik), tapi cukup longgar untuk satu mitra bertanya berulang
+// kali dalam 5 menit (mis. demo interview, atau pengguna nyata menanyakan ulang info yang sama).
 const ANOMALY_THRESHOLD: Partial<Record<ToolName, number>> = {
-  get_angsuran: 10,
-  get_majelis_info: 10,
-  get_portofolio: 10,
-  create_complaint_ticket: 5,
-  create_dsr_request: 5,
-  create_restructuring_request: 3,
+  get_angsuran: 30,
+  get_majelis_info: 30,
+  get_portofolio: 30,
+  create_complaint_ticket: 15,
+  create_dsr_request: 15,
+  create_restructuring_request: 8,
 };
 
 async function checkKillSwitch(db: D1Database, toolName: ToolName): Promise<string | null> {
