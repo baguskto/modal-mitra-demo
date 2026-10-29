@@ -162,3 +162,19 @@ CREATE TABLE IF NOT EXISTS sla_escalations (
   checked_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_sla_escalations_session ON sla_escalations(session_id);
+
+-- feat/extras — fitur #5 (memori jangka panjang per mitra, dengan persetujuan & hak hapus UU PDP).
+-- `summary` HANYA boleh berisi preferensi/pola komunikasi (mis. "lebih suka gaya Jawa informal",
+-- "sering tanya soal restrukturisasi") — BUKAN duplikasi data transaksi (sudah ada di
+-- pinjaman/angsuran/pendanaan) & WAJIB lolos scanOutputForPII sebelum disimpan (lihat
+-- src/extras/memory/longTermMemory.ts). consent_given=0 -> baris SEHARUSNYA sudah terhapus
+-- (penarikan persetujuan = penghapusan langsung), kolom ini tetap ada untuk audit "kapan
+-- persetujuan diberikan/ditarik" tanpa menyimpan isi memori setelah ditarik.
+CREATE TABLE IF NOT EXISTS long_term_memory (
+  actor_id TEXT PRIMARY KEY,
+  actor_type TEXT NOT NULL,        -- 'mitra' | 'pendana'
+  summary TEXT,
+  consent_given INTEGER NOT NULL DEFAULT 0,
+  consent_at TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

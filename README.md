@@ -291,5 +291,30 @@ Logika keputusan (`decision.ts`) dipisah dari kelas `WorkflowEntrypoint` (yang b
 `cloudflare:workers`) supaya 100% unit-testable di Node/vitest tanpa `wrangler dev` — 10 unit test
 + 3 eval case.
 
-### 11.5 — 11.6 (memori jangka panjang + PII vault, Langfuse prompt management/online eval)
+### 11.5 Memori jangka panjang per mitra/pendana (consent-gated) + hak hapus PDP
+`src/extras/memory/{longTermMemory,routes}.ts` (toggle `FEATURE_LONG_TERM_MEMORY`, default **OFF**
+— consent flow perlu diuji lebih lanjut di UI sebelum aktif demo). Menyimpan **ringkasan
+preferensi/pola komunikasi** lintas sesi (mis. "lebih suka gaya Jawa informal", "sering tanya soal
+restrukturisasi") — **BUKAN** duplikasi data transaksi (sudah ada di `pinjaman`/`angsuran`/
+`pendanaan`).
+
+- **Consent-gated di SETIAP operasi**, bukan cuma sekali di awal: `saveMemorySummary` mengecek
+  ulang `consent_given` di tabel setiap kali ditulis (`POST /api/extras/memory/:actorId/consent`
+  dulu, baru `POST /api/extras/memory/:actorId`).
+- **Hak hapus (UU PDP)**: `DELETE /api/extras/memory/:actorId` menghapus baris SUNGGUHAN (bukan
+  soft-delete/flag). Menarik persetujuan (`consent:false`) juga langsung menghapus isi memori —
+  "hak hapus" harus benar-benar menghapus, tidak hanya menyembunyikan di balik flag.
+- **Koordinasi PII vault**: saat worktree ini ditulis, worker inti belum membuat PII vault
+  dedicated (S4 di plan keamanan). Sebagai pagar minimum SEKARANG, setiap `summary` wajib lolos
+  `scanOutputForPII` (guard yang sudah ada, tidak diduplikasi) — `evaluateMemoryWrite()` murni,
+  dites tanpa D1. **TODO integrasi** (dicatat jujur, belum dikerjakan): bila/saat PII vault
+  dedicated sudah ada, arahkan storage ini melalui vault itu (tokenisasi) alih-alih redaksi manual.
+- Event X-Ray `memory_read`/`memory_write`/`memory_deleted`.
+
+9 unit test (`tests/extras/memory.test.ts`) + 3 eval case. Satu bug nyata ditemukan & diperbaiki
+saat menulis test ini sendiri: SQL UPSERT yang mencampur literal inline (`NULL`, `0`/`1`) dengan
+placeholder posisional `?` membuat argumen `bind()` salah urut pada path "tarik persetujuan" —
+diperbaiki dengan membind SEMUA kolom sebagai placeholder eksplisit (lihat commit).
+
+### 11.6 Langfuse prompt management + online eval
 <!-- ditambahkan di sini begitu fitur terkait selesai. -->

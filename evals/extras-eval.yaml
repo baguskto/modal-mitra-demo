@@ -98,3 +98,23 @@ cases:
     type: sla_decision_equals
     session_row: { mode: "AI", last_sender: "ai", handoff_at: "2026-10-30T00:00:00Z" }
     expect: resolved_in_time
+
+  # --- Fitur #5: memori jangka panjang (consent-gated) + hak hapus PDP ---
+  - feature: long_term_memory
+    description: memory_01_no_consent_blocks_write
+    type: memory_write_allowed
+    consent_given: false
+    input: "Lebih suka gaya bahasa Jawa informal."
+    expect: false
+  - feature: long_term_memory
+    description: memory_02_consent_clean_summary_allowed
+    type: memory_write_allowed
+    consent_given: true
+    input: "Lebih suka gaya bahasa Jawa informal, sering tanya soal restrukturisasi."
+    expect: true
+  - feature: long_term_memory
+    description: memory_03_consent_but_pii_blocked
+    type: memory_write_allowed
+    consent_given: true
+    input: "HP mitra 081234567890, suka dihubungi sore."
+    expect: false

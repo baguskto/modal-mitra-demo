@@ -35,5 +35,12 @@ worker `/learn` tidak perlu riset ulang isi fitur-fitur ini.
 - **Pertanyaan interview (30s)**: "Kenapa harus Cloudflare Workflows, bukan `setTimeout`/`alarm` Durable Object biasa?" → Jawab: Workflows adalah primitif durable BAWAAN (checkpoint tiap `step`, retry otomatis, survive restart/deploy Worker) — cocok untuk timer yang HARUS menyala walau Worker/DO yang memulainya sudah tidak hidup lagi; `setTimeout` di Worker hilang begitu instance berhenti.
 - **WOW fact**: keputusan eskalasi (`decideEscalation`) dipisah murni dari runtime Workflow sehingga 100% dites di Node tanpa `wrangler dev` — 10 unit test + 3 eval case, 0 biaya tambahan (dalam limit free tier Workflows).
 
-<!-- Entri berikutnya (memori PDP, Langfuse prompt/eval) ditambahkan di sini begitu fitur terkait
+## Level 5 — Guardrails & UU PDP: memori jangka panjang dengan persetujuan + hak hapus
+
+- **Analogi 1 kalimat**: "seperti barista hafal 'kopi susu, kurang gula' kalau kita izinkan — dan begitu kita bilang berhenti, catatannya langsung disobek, bukan cuma dicoret."
+- **Lihat di demo**: aktifkan toggle memori untuk satu mitra demo → tanya hal yang sama 2 sesi berbeda → X-Ray `memory_read` menunjukkan ringkasan terpakai; tarik persetujuan → `memory_deleted`, baris sungguhan terhapus di D1.
+- **Pertanyaan interview (30s)**: "Kenapa consent dicek ulang di setiap operasi tulis, bukan cuma sekali di awal?" → Jawab: persetujuan bisa ditarik kapan saja (hak subjek data, UU PDP); mengecek sekali di awal lalu mempercayainya selamanya berarti bisa menulis data baru SETELAH pengguna menarik persetujuan tanpa sadar — re-check di setiap operasi adalah pagar yang benar secara desain, bukan optimisasi prematur.
+- **WOW fact**: satu bug nyata ditemukan sendiri saat menulis unit test (SQL UPSERT yang mencampur literal inline dengan placeholder `?` membuat argumen `bind()` salah urut pada path "tarik persetujuan") — dicatat apa adanya di README §11.5, bukan disembunyikan; diperbaiki sebelum commit.
+
+<!-- Entri berikutnya (Langfuse prompt mgmt/online eval) ditambahkan di sini begitu fitur terkait
      selesai — lihat commit feat/extras berikutnya. -->

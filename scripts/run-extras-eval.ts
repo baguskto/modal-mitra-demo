@@ -9,6 +9,7 @@ import { detectLanguage } from "../src/extras/language";
 import { estimateComplexity } from "../src/extras/cache/modelRouter";
 import { KENARI_ALLOWED_MODELS } from "../src/extras/cache/kenariProvider";
 import { decideEscalation, type SessionRow } from "../src/extras/workflows/decision";
+import { evaluateMemoryWrite } from "../src/extras/memory/longTermMemory";
 
 interface Case {
   feature: string;
@@ -17,6 +18,7 @@ interface Case {
   input?: string;
   step_index?: number;
   session_row?: SessionRow;
+  consent_given?: boolean;
   expect: string | number | boolean;
 }
 
@@ -43,6 +45,10 @@ function runCase(c: Case): { pass: boolean; actual?: string; reason?: string } {
     case "sla_decision_equals": {
       const actual = decideEscalation(c.session_row ?? null, 5).outcome;
       return { pass: actual === c.expect, actual };
+    }
+    case "memory_write_allowed": {
+      const actual = evaluateMemoryWrite(c.consent_given ?? false, c.input ?? "").allowed;
+      return { pass: actual === c.expect, actual: String(actual) };
     }
     default:
       return { pass: false, reason: `unknown assertion type: ${c.type}` };
