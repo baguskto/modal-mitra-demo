@@ -49,13 +49,13 @@ export async function getAuditLog(sessionId: string, mine?: string) {
 export async function listHitlPending() {
   return csGetList(`/api/cs/hitl/pending`);
 }
-// `approver`: nama/identitas approver -- server menolak (409) kalau approver kedua = approver
-// pertama (fix "four-eyes palsu", lihat src/index.ts).
-export async function approveHitl(restruId: string, approver: string) {
+// `approverId`: id identitas CS demo TETAP (lihat ui/src/csIdentities.ts), BUKAN teks bebas --
+// server menolak id yang tidak dikenal (400) & id yang sama dengan approver pertama (409).
+export async function approveHitl(restruId: string, approverId: string) {
   const res = await fetch(`/api/cs/hitl/${encodeURIComponent(restruId)}/approve`, {
     method: "POST",
     headers: { ...csHeaders(), "content-type": "application/json" },
-    body: JSON.stringify({ approver }),
+    body: JSON.stringify({ approverId }),
   });
   return res.json();
 }

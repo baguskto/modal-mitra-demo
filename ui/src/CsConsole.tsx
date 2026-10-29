@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { approveHitl, connectCsSocket, getAuditLog, listHitlPending, listKillSwitches, listQueue, listSessions, rejectHitl, setKillSwitch, tamperDemo, verifyAudit } from "./api";
+import { CS_IDENTITIES } from "./csIdentities";
+import { renderInlineMarkdown } from "./markdown";
 
 const WRITE_TOOLS = ["create_complaint_ticket", "create_dsr_request", "create_restructuring_request", "handoff_to_human"];
+const CS_IDENTITY_STORAGE_KEY = "mmk_cs_identity";
 
 interface Msg {
   role: "user" | "ai" | "human" | "system";
@@ -36,8 +39,17 @@ export default function CsConsole({ presenter, mySessionId }: { presenter: boole
   const [auditResult, setAuditResult] = useState<any>(null);
   const [auditLog, setAuditLog] = useState<any[]>([]);
   const [hitlPending, setHitlPending] = useState<any[]>([]);
+  // FIX (temuan QA M5/m6): identitas approver dipilih dari dropdown (akun CS demo TETAP), bukan
+  // diketik bebas via window.prompt() -- persist per tab via sessionStorage, mirip "login" CS demo.
+  const [csIdentityId, setCsIdentityId] = useState<string>(() => sessionStorage.getItem(CS_IDENTITY_STORAGE_KEY) ?? CS_IDENTITIES[0].id);
+  const [rejectingId, setRejectingId] = useState<string | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
   const wsRef = useRef<WebSocket | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    sessionStorage.setItem(CS_IDENTITY_STORAGE_KEY, csIdentityId);
+  }, [csIdentityId]);
 
   async function refreshLists() {
     setQueue(await listQueue(mySessionId));
@@ -55,17 +67,24 @@ export default function CsConsole({ presenter, mySessionId }: { presenter: boole
     if (presenter) listKillSwitches().then(setKillSwitches);
   }, [presenter]);
 
-  async function decideHitl(restruId: string, approve: boolean) {
-    if (approve) {
-      // Fix "four-eyes palsu" (temuan QA MAJOR d): wajib identitas approver supaya server bisa
-      // menolak approver kedua = approver pertama (409, lihat src/index.ts).
-      const approver = window.prompt("Nama Anda sebagai approver (four-eyes butuh 2 approver BERBEDA):");
-      if (!approver) return;
-      const res = await approveHitl(restruId, approver);
-      if (res?.error) window.alert(res.error);
-    } else {
-      await rejectHitl(restruId, window.prompt("Alasan tolak (opsional):") ?? undefined);
-    }
+  // FIX (temuan QA M5): approver = identitas yang DIPILIH (csIdentityId), bukan window.prompt().
+  // Server (src/index.ts) menolak id yang tidak ada di daftar & id yang sama dengan approver pertama.
+  async function approveWithIdentity(restruId: string) {
+    const res = await approveHitl(restruId, csIdentityId);
+    if (res?.error) window.alert(res.error);
+    refreshLists();
+  }
+
+  // FIX (temuan QA m6): alasan tolak lewat textarea inline (dibuka per-item), bukan window.prompt().
+  function openRejectBox(restruId: string) {
+    setRejectingId(restruId);
+    setRejectReason("");
+  }
+  async function submitReject() {
+    if (!rejectingId) return;
+    await rejectHitl(rejectingId, rejectReason || undefined);
+    setRejectingId(null);
+    setRejectReason("");
     refreshLists();
   }
 
@@ -152,24 +171,52 @@ export default function CsConsole({ presenter, mySessionId }: { presenter: boole
           </div>
         )}
         <div className="queue-heading">🔒 Persetujuan HITL — four-eyes ({hitlPending.length})</div>
+        {presenter && (
+          <div style={{ padding: "0 14px 8px", fontSize: 11 }}>
+            🧑‍💼 Masuk sebagai (CS demo):{" "}
+            <select value={csIdentityId} onChange={(e) => setCsIdentityId(e.target.value)}>
+              {CS_IDENTITIES.map((i) => (
+                <option key={i.id} value={i.id}>{i.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
         {hitlPending.length === 0 && <div className="empty-hint">Tidak ada permintaan restrukturisasi menunggu.</div>}
-        {hitlPending.map((h) => (
+        {hitlPending.map((h) => {
+          const firstApproverName = CS_IDENTITIES.find((i) => i.id === h.first_approver)?.name ?? h.first_approver;
+          return (
           <div key={h.restru_id} className="session-item" style={{ borderLeft: "3px solid #e0a800" }}>
             <div><b>{h.restru_id}</b> · {h.mitra_id} ({h.pinjaman_no})</div>
             <div className="sub">{h.reason?.slice(0, 80)}</div>
             {h.status === "approved_once" && (
-              <div className="sub" style={{ color: "#8a5a00" }}>✅ Disetujui oleh {h.first_approver} — menunggu approver KE-2 yang berbeda.</div>
+              <div className="sub" style={{ color: "#8a5a00" }}>✅ Disetujui oleh {firstApproverName} — menunggu approver KE-2 yang berbeda.</div>
             )}
             {presenter ? (
-              <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
-                <button onClick={() => decideHitl(h.restru_id, true)}>Setujui</button>
-                <button onClick={() => decideHitl(h.restru_id, false)}>Tolak</button>
-              </div>
+              rejectingId === h.restru_id ? (
+                <div style={{ marginTop: 4 }}>
+                  <textarea
+                    value={rejectReason}
+                    onChange={(e) => setRejectReason(e.target.value)}
+                    placeholder="Alasan tolak (opsional)..."
+                    style={{ width: "100%", fontSize: 11, minHeight: 40 }}
+                  />
+                  <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+                    <button onClick={submitReject}>Kirim tolak</button>
+                    <button onClick={() => setRejectingId(null)}>Batal</button>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+                  <button onClick={() => approveWithIdentity(h.restru_id)}>Setujui sbg {CS_IDENTITIES.find((i) => i.id === csIdentityId)?.name}</button>
+                  <button onClick={() => openRejectBox(h.restru_id)}>Tolak</button>
+                </div>
+              )
             ) : (
               <div className="sub" style={{ opacity: 0.7, marginTop: 4 }}>Setujui/Tolak khusus mode Presenter (four-eyes)</div>
             )}
           </div>
-        ))}
+          );
+        })}
         <div className="queue-heading">🔥 Antrean handoff ({queue.length})</div>
         {queue.length === 0 && <div className="empty-hint">Tidak ada sesi menunggu CS.</div>}
         {queue.map((s) => (
@@ -199,7 +246,7 @@ export default function CsConsole({ presenter, mySessionId }: { presenter: boole
             <div className="messages">
               {history.map((m, i) => (
                 <div key={i} className={`msg ${m.role}`}>
-                  {m.text}
+                  {renderInlineMarkdown(m.text)}
                   {m.citations && m.citations.length > 0 && <div className="citations">Sumber: {m.citations.join(", ")}</div>}
                 </div>
               ))}

@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "npm run build:ui && wrangler deploy",
+    "deploy:all": "tsx scripts/deploy-all.ts",
     "build:ui": "vite build --config ui/vite.config.ts",
     "typecheck": "tsc --noEmit",
     "db:migrate:local": "wrangler d1 execute modal_mitra_db --local --file=src/db/schema.sql",

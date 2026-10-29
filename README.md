@@ -303,6 +303,22 @@ npm run latency
 
 **Catatan memori laptop**: hanya jalankan satu proses dev server (aturan laptop 18GB); untuk demo, cukup pakai URL yang sudah dideploy. Laptop ini sempat reboot 3× karena OOM saat sesi kerja ini (lihat §0.2) — pelajaran yang diambil: tutup Chromium/dev-server/worker tambahan begitu selesai dipakai, jangan dibiarkan hidup di belakang.
 
+### 13.1 Runbook deploy aman — `npm run deploy:all`
+
+Temuan QA: commit yang menambah kolom DB (`sessions_index.source`, `restructuring_requests.approved_once`/`first_approver`) berisiko membuat `/api/cs/sessions`, `/api/cs/queue`, dan approve HITL gagal kalau di-deploy TANPA migrasi + reseed terlebih dulu. `scripts/deploy-all.ts` (`npm run deploy:all`) menjalankan urutan aman secara otomatis, berhenti di langkah mana pun kalau gagal:
+
+1. **Cek login** — `wrangler whoami`; kalau belum login, berhenti dengan pesan jelas (jalankan `npx wrangler login` dulu, atau set `CLOUDFLARE_API_TOKEN`).
+2. **Migrasi D1 idempotent** — cek `pragma_table_info` dulu, `ALTER TABLE ... ADD COLUMN` HANYA kalau kolom belum ada (aman di-rerun berkali-kali, tidak error "duplicate column").
+3. **Deploy** — `npm run deploy` (build UI + `wrangler deploy`).
+4. **Reseed data sintetis** — `npm run seed:remote`. **Aman**: `data/synthetic/seed.sql` hanya `DELETE`+`INSERT` ulang `majelis/mitra/pinjaman/angsuran/pendana/pendanaan/kb_documents` (data referensi/sintetis), TIDAK PERNAH menyentuh `sessions_index`/`audit_log`/`tickets`/`dsr_requests`/`restructuring_requests` — sesi chat live & approval HITL yang sedang berjalan tidak hilang.
+5. **Purge sesi eval** — `DELETE FROM sessions_index WHERE source = 'eval'`, supaya antrean CS live tidak langsung tercemar sisa eval run sebelumnya.
+
+```bash
+npm run deploy:all
+```
+
+Setelah selesai, lakukan smoke test manual (script mencetak daftarnya di akhir): 1 giliran chat publik, Konsol CS publik (hanya sesi sendiri), approve HITL 2 identitas CS berbeda, `/learn` publik tanpa merek/Q&A, Verifikasi integritas log + Demo tamper.
+
 ---
 
 ## 14. feat/extras — fitur tambahan (worker kedua, digabung ke main sesi ini)

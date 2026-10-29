@@ -17,6 +17,7 @@ import { StateGraph, START, END } from "@langchain/langgraph";
 import { redactPII, resolveTokens, resolveLeakedTokensInText } from "../guards/pii";
 import { heuristicInjectionCheck, llamaGuardCheck, wrapAsData } from "../guards/injection";
 import { checkScope } from "../guards/scope";
+import { checkDataIntegrityAbuse } from "../guards/dataIntegrity";
 import { checkOutput, checkCitationsGrounded, checkMemberPrivacyLeak, FALLBACK_NOT_FOUND } from "../guards/output";
 import { classifyIntent, detectHitl, type Intent, type Persona } from "./router";
 import { retrieve, formatChunksAsContext } from "./rag";
@@ -72,6 +73,12 @@ const AgentState = z.object({
   finalText: z.string().default(""),
   citations: z.array(z.string()).default([]),
   modelUsed: z.string().default("none"),
+  // FIX (temuan QA M2): kalau TIDAK ada guard deterministik yang blokir, tapi jawaban LLM sendiri
+  // berbentuk penolakan (red-team 5/6 serangan ditolak justru oleh LLM, bukan guard) -- ditandai
+  // di sini via heuristik kata kunci (lihat looksLikeRefusal) supaya X-Ray/Red Team Arena bisa
+  // atribusi layer yang JUJUR ("LLM menolak") bukan diam-diam tampil "selesai" hijau seolah tidak
+  // ada apa pun yang terjadi.
+  modelRefused: z.boolean().default(false),
   blockedByGuard: z.string().optional(),
   instantDelivery: z.boolean().default(false),
 
@@ -153,6 +160,20 @@ function extractAnswerFallback(raw: string): string {
   return raw;
 }
 
+// FIX (temuan QA M2): heuristik kata kunci penolakan Bahasa Indonesia -- BUKAN deteksi sempurna
+// (tidak ada NLU di sini), tapi cukup untuk membedakan "LLM menolak sendiri" vs "LLM menjawab
+// normal" demi atribusi layer yang jujur di X-Ray/Red Team Arena (lihat state.modelRefused).
+const REFUSAL_PATTERNS: RegExp[] = [
+  /\btidak (bisa|dapat|boleh|berwenang|diizinkan)\b/i,
+  /\bmaaf,? (saya )?(tidak|tdk)\b/i,
+  /\b(bukan|di luar) kewenangan saya\b/i,
+  /\bmenolak\b/i,
+  /\btidak (akan|pernah) (menghapus|mengubah|membocorkan|menampilkan|menjamin)\b/i,
+];
+function looksLikeRefusal(text: string): boolean {
+  return REFUSAL_PATTERNS.some((re) => re.test(text));
+}
+
 // --- NODE: guard_in — injeksi (heuristik + Llama Guard) -> redaksi PII -> scope ---
 async function nodeGuardIn(state: State, config: any): Promise<Partial<State>> {
   const { env, trace }: RunConfigurable = config.configurable;
@@ -166,6 +187,22 @@ async function nodeGuardIn(state: State, config: any): Promise<Partial<State>> {
       blockedByGuard: "injection",
       instantDelivery: true,
       finalText: "Maaf, pesan Anda terdeteksi mengandung instruksi yang tidak dapat saya proses demi keamanan akun Anda. Jika ini kesalahan, silakan ajukan pertanyaan dengan kalimat lain, atau saya alihkan ke CS.",
+    };
+  }
+
+  // FIX (temuan QA M2, "Tool abuse" dijawab LLM dengan nada menyetujui "Bisa, Bu..."): permintaan
+  // hapus/ubah riwayat transaksi/status pembayaran ditolak DETERMINISTIK di sini (sebelum LLM sama
+  // sekali melihatnya) -- sistem ini sengaja tidak punya tool UPDATE/DELETE untuk data inti (lihat
+  // README §10), jadi penolakannya harus pasti, bukan tergantung mood model. Kategori terpisah
+  // ("tool_policy") dari "injection" supaya X-Ray/Red Team Arena bisa atribusi layer yang benar.
+  const writeAbuse = checkDataIntegrityAbuse(state.userText);
+  if (writeAbuse.blocked) {
+    await appendAuditLog(env.DB, state.sessionId, "system", "guard_block", { layer: "tool_policy", reason: writeAbuse.reason });
+    span?.end({ blocked: true, layer: "tool_policy" }, "WARNING");
+    return {
+      blockedByGuard: "tool_policy",
+      instantDelivery: true,
+      finalText: "Maaf, saya TIDAK BISA menghapus atau mengubah riwayat transaksi/status pembayaran Anda — sistem ini sengaja tidak memiliki tool untuk itu (integritas data: audit log append-only, tidak ada update/delete langsung ke data transaksi, lihat kebijakan integritas data kami). Kalau Anda keberatan dengan status keterlambatan/denda, saya bisa catat sebagai pengaduan untuk ditinjau CS/tim kredit — bukan diubah otomatis. Mau saya bantu buatkan pengaduan itu?",
     };
   }
 
@@ -461,16 +498,18 @@ async function nodeTools(state: State, config: any): Promise<Partial<State>> {
   }
 
   if (!finalText) finalText = FALLBACK_NOT_FOUND;
+  const modelRefused = looksLikeRefusal(finalText);
   // FIX (temuan QA MAJOR a, "panel Tools 0 langkah padahal tool jalan"): `toolCallsMade` lokal
   // hanya menghitung tool yang dipanggil DI DALAM loop node ini -- tool yang sudah jalan di node
   // sebelumnya (mis. verify_mitra via auto-verify di verify_identity, atau create_complaint_ticket
   // di route_intent) tidak ikut terhitung walau SUDAH jalan di giliran ini, jadi panel X-Ray bisa
   // menampilkan "0 langkah" walau tool sungguhan jalan. Hitung KUMULATIF dari seluruh giliran.
-  span?.end({ steps: state.toolCallsMade.length + toolCallsMade.length, model: modelUsed });
+  span?.end({ steps: state.toolCallsMade.length + toolCallsMade.length, model: modelUsed, refused: modelRefused });
   return {
     finalText,
     citations,
     modelUsed,
+    modelRefused,
     verifiedActorId,
     allowedIds: [...allowedIds],
     toolCallsMade: [...state.toolCallsMade, ...toolCallsMade],
@@ -587,6 +626,8 @@ export interface AgentTurnOutput {
   toolCallsMade: { tool: string; ok: boolean }[];
   modelUsed: string;
   blockedByGuard?: string;
+  /** Lihat AgentState.modelRefused -- true kalau jawaban LLM sendiri (bukan guard) terbaca sebagai penolakan. */
+  modelRefused: boolean;
   instantDelivery: boolean;
   timing: { firstTokenMs: number | null; totalMs: number };
 }
@@ -628,6 +669,7 @@ export async function runAgentGraph(env: AgentEnvBindings, input: AgentTurnInput
     finalText: "",
     citations: [],
     modelUsed: "none",
+    modelRefused: false,
     blockedByGuard: undefined,
     instantDelivery: false,
     handoffTriggered: false,
@@ -651,6 +693,7 @@ export async function runAgentGraph(env: AgentEnvBindings, input: AgentTurnInput
     toolCallsMade: final.toolCallsMade,
     modelUsed: final.modelUsed,
     blockedByGuard: final.blockedByGuard,
+    modelRefused: final.modelRefused,
     instantDelivery: final.instantDelivery,
     timing: { firstTokenMs: final.firstTokenMs, totalMs: final.totalMs },
   };

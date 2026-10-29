@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import ChatPanel from "./ChatPanel";
 import CsConsole from "./CsConsole";
 import Dashboard from "./Dashboard";
@@ -17,6 +17,11 @@ export default function App() {
     window.location.pathname.startsWith("/learn") ? "learn" : "chat",
   );
   const [presenter, setPresenter] = useState(false);
+  // FIX (temuan QA m6, "window.prompt() dialog blocking"): login Presenter sekarang form inline
+  // (non-blocking), bukan window.prompt() -- pola yang sama persis dengan bug freeze P0 sebelumnya.
+  const [showPresenterLogin, setShowPresenterLogin] = useState(false);
+  const [presenterKeyInput, setPresenterKeyInput] = useState("");
+  const [presenterLoginError, setPresenterLoginError] = useState<string | null>(null);
   const [pendingDemo, setPendingDemo] = useState<DemoLink | null>(null);
   const [sessionId] = useState(() => {
     const existing = sessionStorage.getItem("mmk_session_id");
@@ -47,11 +52,22 @@ export default function App() {
       setPresenter(false);
       return;
     }
-    const key = window.prompt("Passphrase Presenter:");
-    if (!key) return;
-    const ok = await presenterLogin(key);
-    if (ok) setPresenter(true);
-    else window.alert("Passphrase salah.");
+    setPresenterLoginError(null);
+    setPresenterKeyInput("");
+    setShowPresenterLogin(true);
+  }
+
+  async function submitPresenterLogin(e: FormEvent) {
+    e.preventDefault();
+    if (!presenterKeyInput) return;
+    const ok = await presenterLogin(presenterKeyInput);
+    if (ok) {
+      setPresenter(true);
+      setShowPresenterLogin(false);
+      setPresenterKeyInput("");
+    } else {
+      setPresenterLoginError("Passphrase salah.");
+    }
   }
 
   return (
@@ -72,6 +88,20 @@ export default function App() {
           </button>
         </div>
       </div>
+      {showPresenterLogin && (
+        <form className="presenter-login-inline" onSubmit={submitPresenterLogin}>
+          <span>Passphrase Presenter:</span>
+          <input
+            type="password"
+            autoFocus
+            value={presenterKeyInput}
+            onChange={(e) => setPresenterKeyInput(e.target.value)}
+          />
+          <button type="submit">Masuk</button>
+          <button type="button" onClick={() => setShowPresenterLogin(false)}>Batal</button>
+          {presenterLoginError && <span className="presenter-login-error">{presenterLoginError}</span>}
+        </form>
+      )}
       <div className="content">
         {tab === "chat" && (
           <ChatPanel

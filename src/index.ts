@@ -4,6 +4,7 @@ import { signPresenterToken, verifyPresenterToken, readCookie, presenterCookieHe
 import { checkIpRateLimit } from "./security/rateLimit";
 import { extrasApp, type ExtrasAppEnv } from "./extras/router";
 import { PRESENTER_QA } from "./data/presenterQa";
+import { isValidCsIdentity } from "./security/csIdentities";
 
 export { ChatAgent };
 export { SlaEscalationWorkflow } from "./extras/workflows/slaEscalationWorkflow";
@@ -28,6 +29,14 @@ export interface Env extends ExtrasAppEnv {
 }
 
 const app = new Hono<{ Bindings: Env; Variables: { csFull: boolean } }>();
+
+// FIX (temuan QA minor m7): meta noindex + robots.txt Disallow sudah ada, tapi tidak ada header
+// HTTP X-Robots-Tag (sebagian crawler/preview-bot mengandalkan header, bukan hanya meta tag).
+// Dipasang di SEMUA respons (termasuk /api/*) -- demo ini tidak boleh terindeks sama sekali.
+app.use("*", async (c, next) => {
+  await next();
+  c.header("X-Robots-Tag", "noindex, nofollow, noarchive");
+});
 
 // Mode Publik vs Presenter (visibility-rules.md, WAJIB) — cookie HttpOnly bertanda, bukan
 // passphrase mentah (lihat security/presenter.ts). `isPresenter` dipakai untuk (a) membebaskan
@@ -278,35 +287,41 @@ app.get("/api/cs/hitl/pending", async (c) => {
   return c.json(rows.results);
 });
 
-// FIX (temuan QA MAJOR d — "four-eyes palsu"): SEBELUMNYA satu klik "Setujui" langsung membuat
-// status 'submitted' (hanya 1 approver), dan approve KEDUA oleh ORANG YANG SAMA tetap balas 200
-// (bukan ditolak) -- jadi "four-eyes" cuma nama, bukan kontrol sungguhan. Sekarang: approve
-// PERTAMA -> 'approved_once' (mencatat `first_approver`); approve KEDUA WAJIB nama approver BEDA
-// (case-insensitive, trim) baru jadi 'submitted'; approver yang SAMA mencoba approve lagi -> 409
-// dengan pesan jelas (bukan diam-diam sukses).
+// FIX (temuan QA MAJOR d / M5 — "four-eyes palsu"): SEBELUMNYA satu klik "Setujui" langsung
+// membuat status 'submitted' (hanya 1 approver), dan approve KEDUA oleh ORANG YANG SAMA (diketik
+// bebas lewat window.prompt()) tetap balas 200 -- jadi "four-eyes" cuma nama, bukan kontrol
+// sungguhan. Sekarang: (1) approver WAJIB salah satu identitas CS demo TETAP di
+// security/csIdentities.ts (dipilih dari dropdown di UI, BUKAN teks bebas) -- id di luar daftar
+// ditolak 400; (2) approve PERTAMA -> 'approved_once' (mencatat `first_approver` = id identitas);
+// (3) approve KEDUA wajib id BERBEDA baru jadi 'submitted'; id yang SAMA mencoba approve lagi ->
+// 409 dengan pesan jelas.
 app.post("/api/cs/hitl/:restruId/approve", async (c) => {
   const denied = requireFullCs(c);
   if (denied) return denied;
   const restruId = c.req.param("restruId");
-  const body = await c.req.json<{ approver?: string }>().catch(() => ({}) as { approver?: string });
-  const approver = (body.approver ?? "").trim();
-  if (!approver) return c.json({ error: "Nama approver wajib diisi (four-eyes butuh identitas approver)." }, 400);
+  const body = await c.req.json<{ approverId?: string }>().catch(() => ({}) as { approverId?: string });
+  const identity = isValidCsIdentity(body.approverId);
+  if (!identity) {
+    return c.json({ error: "Approver tidak valid — pilih salah satu akun CS demo (bukan teks bebas)." }, 400);
+  }
 
   const row = await c.env.DB.prepare(`SELECT status, first_approver FROM restructuring_requests WHERE restru_id = ?`).bind(restruId).first<{ status: string; first_approver: string | null }>();
   if (!row) return c.json({ error: "Permintaan tidak ditemukan." }, 404);
 
   if (row.status === "pending_cs_approval") {
-    await c.env.DB.prepare(`UPDATE restructuring_requests SET status = 'approved_once', first_approver = ? WHERE restru_id = ? AND status = 'pending_cs_approval'`).bind(approver, restruId).run();
-    await c.env.DB.prepare(`INSERT INTO record_versions (record_type, record_id, status, changed_by, note) VALUES ('restructuring_request', ?, 'approved_once', 'cs', ?)`).bind(restruId, `approver 1: ${approver}`).run();
-    return c.json({ ok: true, status: "approved_once", note: "Approve pertama tercatat. Menunggu approver KEDUA yang berbeda untuk finalisasi (four-eyes)." });
+    await c.env.DB.prepare(`UPDATE restructuring_requests SET status = 'approved_once', first_approver = ? WHERE restru_id = ? AND status = 'pending_cs_approval'`).bind(identity.id, restruId).run();
+    await c.env.DB.prepare(`INSERT INTO record_versions (record_type, record_id, status, changed_by, note) VALUES ('restructuring_request', ?, 'approved_once', 'cs', ?)`).bind(restruId, `approver 1: ${identity.name}`).run();
+    return c.json({ ok: true, status: "approved_once", note: `Approve pertama oleh ${identity.name} tercatat. Menunggu approver KEDUA yang berbeda untuk finalisasi (four-eyes).` });
   }
 
   if (row.status === "approved_once") {
-    if (row.first_approver && row.first_approver.trim().toLowerCase() === approver.toLowerCase()) {
-      return c.json({ error: `Approver kedua harus BERBEDA dari approver pertama (${row.first_approver}) — four-eyes butuh 2 orang berbeda.` }, 409);
+    if (row.first_approver === identity.id) {
+      const firstName = isValidCsIdentity(row.first_approver)?.name ?? row.first_approver;
+      return c.json({ error: `Approver kedua harus BERBEDA dari approver pertama (${firstName}) — four-eyes butuh 2 orang berbeda.` }, 409);
     }
     await c.env.DB.prepare(`UPDATE restructuring_requests SET status = 'submitted' WHERE restru_id = ? AND status = 'approved_once'`).bind(restruId).run();
-    await c.env.DB.prepare(`INSERT INTO record_versions (record_type, record_id, status, changed_by, note) VALUES ('restructuring_request', ?, 'submitted', 'cs', ?)`).bind(restruId, `approver 2: ${approver} (approver 1: ${row.first_approver})`).run();
+    const firstName = isValidCsIdentity(row.first_approver)?.name ?? row.first_approver;
+    await c.env.DB.prepare(`INSERT INTO record_versions (record_type, record_id, status, changed_by, note) VALUES ('restructuring_request', ?, 'submitted', 'cs', ?)`).bind(restruId, `approver 2: ${identity.name} (approver 1: ${firstName})`).run();
     return c.json({ ok: true, status: "submitted" });
   }
 

@@ -218,7 +218,7 @@ export const LEVELS: LevelData[] = [
       steps: [
         { label: "Bahasa informal/typo", sub: "\"blm bisa bayar\", \"gimana ya\"", highlight: true },
         { label: "Guardrail toleran", sub: "tetap lolos scope/injection check" },
-        { label: "Voice note (Whisper)", sub: "DIUSULKAN, belum diimplementasikan", proposed: true },
+        { label: "Voice note (Whisper)", sub: "SUDAH jalan — tombol 🎤 di chat (feat/extras #1)", highlight: true },
         { label: "Bahasa daerah eksplisit", sub: "DIUSULKAN, belum diimplementasikan", proposed: true },
       ],
     },

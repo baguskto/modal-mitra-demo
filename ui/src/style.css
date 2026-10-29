@@ -5,6 +5,11 @@ body { margin: 0; font-family: -apple-system, "Segoe UI", sans-serif; background
 .tabs { display: flex; gap: 4px; padding: 8px 16px 0; background: #11213a; }
 .tabs button { background: transparent; border: none; color: #c9d4e8; padding: 10px 16px; cursor: pointer; border-radius: 6px 6px 0 0; font-size: 14px; }
 .tabs button.active { background: #f4f5f7; color: #11213a; font-weight: 600; }
+/* FIX (temuan QA m6): login Presenter inline, bukan window.prompt() blocking dialog. */
+.presenter-login-inline { display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: #1a2a44; color: #c9d4e8; font-size: 12px; }
+.presenter-login-inline input { padding: 4px 8px; border-radius: 4px; border: 1px solid #44536f; background: #0f1b2e; color: white; }
+.presenter-login-inline button { padding: 4px 10px; border-radius: 4px; border: 1px solid #44536f; background: transparent; color: #c9d4e8; cursor: pointer; }
+.presenter-login-error { color: #ff8a8a; }
 .content { flex: 1; overflow: hidden; display: flex; }
 
 .chat-panel { display: flex; flex-direction: column; width: 100%; max-width: 720px; margin: 0 auto; background: #fff; }
@@ -119,6 +124,12 @@ body { margin: 0; font-family: -apple-system, "Segoe UI", sans-serif; background
 .redteam-panel { background: #2a1414; padding: 10px 12px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .redteam-panel .hint { color: #ffb4b4; width: 100%; margin-bottom: 4px; }
 .redteam-panel button { background: #4a1f1f; border: 1px solid #a33; color: #ffdede; border-radius: 6px; padding: 6px 10px; font-size: 11.5px; cursor: pointer; }
+.redteam-panel button:disabled { opacity: 0.5; cursor: not-allowed; }
+/* FIX (temuan QA M2): skor ASR + atribusi lapisan per serangan, dulu tidak ada sama sekali. */
+.redteam-results { width: 100%; margin-top: 8px; background: rgba(0,0,0,0.25); border-radius: 8px; padding: 8px 10px; }
+.redteam-asr { color: #ffe08a; font-weight: 700; font-size: 12px; margin-bottom: 6px; }
+.redteam-result-row { font-size: 11px; color: #ffdede; padding: 2px 0; }
+.redteam-result-row.failed { color: #ff6b6b; font-weight: 700; }
 .xray-panel { width: 340px; min-width: 300px; background: #0f1b2e; color: #d7e2f3; padding: 14px; overflow-y: auto; border-left: 1px solid #243352; font-size: 12px; }
 .xray-title { font-weight: 700; margin-bottom: 8px; color: #8fd3ff; }
 .xray-pipeline { display: flex; flex-direction: column; gap: 6px; }

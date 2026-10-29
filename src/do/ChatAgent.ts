@@ -357,7 +357,7 @@ export class ChatAgent extends AIChatAgent<ChatAgentEnv, SessionMeta> {
         writer.write({
           type: "data-meta",
           id: metaId,
-          data: { citations: result.citations, intent: result.intent, blockedByGuard: result.blockedByGuard ?? null, timing: result.timing, modelUsed: result.modelUsed, xray: xray.events, traceId: trace.traceId },
+          data: { citations: result.citations, intent: result.intent, blockedByGuard: result.blockedByGuard ?? null, modelRefused: result.modelRefused, timing: result.timing, modelUsed: result.modelUsed, xray: xray.events, traceId: trace.traceId },
         });
       },
     });
