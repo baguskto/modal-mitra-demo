@@ -175,6 +175,9 @@ npx wrangler d1 execute modal_mitra_db --remote --file=src/db/schema.sql
 npx wrangler d1 execute modal_mitra_db --remote --file=data/synthetic/seed.sql
 npx wrangler secret put ADMIN_KEY     # untuk endpoint ingest
 npx wrangler secret put CS_TOKEN      # untuk Konsol CS/audit/history
+# feat/extras (opsional per toggle — lihat §11):
+npx wrangler vectorize create modal-mitra-semantic-cache --dimensions=1024 --metric=cosine
+npx wrangler secret put KENARI_API_KEY   # dari Keychain 'kenari-api-key' akun 'omniroute'
 npm run deploy                         # build UI + wrangler deploy
 npx tsx scripts/run-ingest.ts https://<url-worker-anda>.workers.dev <ADMIN_KEY>
 npm run eval                           # MMK_BASE_URL=<url> npm run eval untuk target lain
@@ -217,6 +220,56 @@ Sunda ringan. `detectAndStyle(text)` mengembalikan instruksi gaya untuk ditempel
 Indonesia baku di semua gaya (akurasi > lokalitas). Diuji 10 kalimat (`evals/extras-eval.yaml`,
 `npm run eval:extras`), 0 panggilan network.
 
-<!-- Subbagian berikutnya (semantic cache/model routing/AI Gateway, Cloudflare Workflows SLA,
-     memori jangka panjang + PII vault, Langfuse prompt management/online eval) ditambahkan di sini
-     begitu fitur terkait selesai. -->
+### 11.3 Semantic cache + model routing/cascade + AI Gateway
+`src/extras/cache/{kenariProvider,modelRouter,semanticCache,aiGateway,routes}.ts`.
+
+**Provider LLM — Kenari (arahan koordinator 2026-10-30, menggantikan rencana awal OpenRouter)**:
+OpenAI-compatible (`https://kenari.id/v1`), paket **Studio** (kuota Rp1,2 juta/bulan). Diverifikasi
+langsung (`GET /v1/models`, `GET /v1/account/quota`) saat worktree ini ditulis:
+- Hanya 3 model dipakai, sesuai arahan & tercakup paket: `deepseek-v4-1-flash` (termurah,
+  Rp2.750/Rp5.500 per 1M token input/output), `gpt-6-luna` (Rp1.750/Rp8.500), `gpt-6-1-terra`
+  (Rp20.000/Rp100.000) — allowlist ditegakkan di KODE (`KenariModelNotAllowedError`), bukan cuma
+  aturan di dokumentasi.
+- `gpt-6-astra` (Rp200.000/Rp1.000.000, ~10× lebih mahal dari `gpt-6-1-terra`) **tidak pernah**
+  dipanggil — ditagih PAYG di luar paket, sesuai larangan eksplisit koordinator.
+- **Tidak ada model embeddings di katalog Kenari** (dicek langsung, 0 hasil untuk
+  `endpoints=embeddings`) → embedding tetap 100% Workers AI (`EMBED_MODEL`/BGE-M3), sesuai arahan.
+- **Keputusan urutan fallback ("Kenari utama, Workers AI cadangan, atau dibalik bila Kenari lebih
+  lambat — ukur dan putuskan")**: diukur langsung, 3 repetisi per model, prompt representatif
+  (pertanyaan kebijakan pendek, `max_tokens=120`, non-streaming):
+
+  | Model | p50 (3 rep) |
+  |---|---|
+  | `deepseek-v4-1-flash` | ~2,8 s |
+  | `gpt-6-luna` | ~2,4 s |
+  | `gpt-6-1-terra` | ~4,2 s |
+  | *(pembanding)* Workers AI `qwen3-30b-a3b-fp8`, total p50 end-to-end (`evals/latency-results.json`) | 4,405 s |
+
+  Kenari **tidak lebih lambat** dari Workers AI untuk tier manapun → urutan dipertahankan sesuai
+  arahan (Kenari utama, Workers AI cadangan), **tidak dibalik**. Dicatat apa adanya (bukan diukur
+  ulang-ulang sampai hasil "bagus").
+
+**Model routing/cascade** (`modelRouter.ts`): heuristik kompleksitas murah (panjang teks + sinyal
+klausa + langkah agen ke-N, tanpa panggilan LLM tambahan) menentukan tier AWAL (1=`deepseek`,
+2=`luna`, 3=`terra`); jawaban kosong/error di satu tier → eskalasi tier berikutnya; semua tier
+Kenari gagal → fallback Workers AI (`MODEL_PRIMARY`). Event X-Ray `route` (provider, model, tier,
+fallback:boolean) — WOW panel bisa menunjukkan "90% giliran terjawab oleh tier termurah".
+
+**Semantic cache** (`semanticCache.ts`, toggle `FEATURE_SEMANTIC_CACHE`, default **OFF** sampai
+diuji lebih jauh di traffic nyata): index Vectorize terpisah (`CACHE_VECTORIZE`,
+`modal-mitra-semantic-cache`) dari KB, threshold kemiripan tinggi (0,92 cosine) khusus
+pertanyaan FAQ generik, kunci per-persona (mitra ≠ pendana), TTL 24 jam. **Jawaban yang memuat PII
+ditolak disimpan** (`scanOutputForPII`, guard yang sudah ada — tidak diduplikasi) sebagai pagar
+keras, terlepas dari klaim pemanggil. Event X-Ray `cache_hit`/`cache_miss`.
+
+**AI Gateway** (`aiGateway.ts`, toggle `FEATURE_AI_GATEWAY`, default OFF sampai gateway dibuat di
+dashboard): wrapper URL+header (`cf-aig-cache-ttl`, `cf-aig-metadata` tanpa PII) untuk provider
+Workers AI maupun eksternal via endpoint `compat`. **Trade-off disengaja**: fallback provider tetap
+di app-level (`modelRouter.ts`), bukan fitur "fallback array" bawaan AI Gateway satu endpoint
+unified — supaya cascade tetap satu sumber kebenaran yang mudah dites unit.
+
+14 eval case (`evals/extras-eval.yaml`, `npm run eval:extras`) + 18 unit test
+(`tests/extras/cache.test.ts`).
+
+<!-- Subbagian berikutnya (Cloudflare Workflows SLA, memori jangka panjang + PII vault, Langfuse
+     prompt management/online eval) ditambahkan di sini begitu fitur terkait selesai. -->

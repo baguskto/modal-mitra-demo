@@ -6,14 +6,19 @@
 import { readFileSync } from "node:fs";
 import { parse } from "yaml";
 import { detectLanguage } from "../src/extras/language";
+import { estimateComplexity } from "../src/extras/cache/modelRouter";
+import { KENARI_ALLOWED_MODELS } from "../src/extras/cache/kenariProvider";
 
 interface Case {
   feature: string;
   description: string;
   type: string;
   input: string;
-  expect: string;
+  step_index?: number;
+  expect: string | number | boolean;
 }
+
+const COMPLEXITY_START_TIER = { simple: 1, moderate: 2, complex: 3 } as const;
 
 const config = parse(readFileSync("evals/extras-eval.yaml", "utf-8"));
 const cases: Case[] = config.cases;
@@ -23,6 +28,15 @@ function runCase(c: Case): { pass: boolean; actual?: string; reason?: string } {
     case "language_equals": {
       const actual = detectLanguage(c.input).language;
       return { pass: actual === c.expect, actual };
+    }
+    case "complexity_starts_tier": {
+      const complexity = estimateComplexity(c.input, c.step_index ?? 0);
+      const actual = COMPLEXITY_START_TIER[complexity];
+      return { pass: actual === c.expect, actual: String(actual) };
+    }
+    case "kenari_model_rejected": {
+      const actual = !KENARI_ALLOWED_MODELS.includes(c.input as any);
+      return { pass: actual === c.expect, actual: String(actual) };
     }
     default:
       return { pass: false, reason: `unknown assertion type: ${c.type}` };

@@ -58,3 +58,26 @@ cases:
     type: language_equals
     input: "Terima kasih atas informasinya, akan saya pertimbangkan lebih lanjut."
     expect: id_formal
+
+  # --- Fitur #3: model routing/cascade (Kenari tier 1/2/3 + fallback Workers AI) ---
+  - feature: model_routing
+    description: route_01_simple_starts_tier1
+    type: complexity_starts_tier
+    input: "halo"
+    expect: 1
+  - feature: model_routing
+    description: route_02_tool_step_escalates_tier2
+    type: complexity_starts_tier
+    input: "cek status pengajuan saya"
+    step_index: 1
+    expect: 2
+  - feature: model_routing
+    description: route_03_complex_starts_tier3
+    type: complexity_starts_tier
+    input: "Saya mau tanya karena bulan ini saya telat bayar dan ingin tahu apakah bisa restrukturisasi, tapi juga ingin tahu dampaknya ke skor kelompok karena takut memberatkan anggota lain, dan juga ingin tahu apakah ini akan dilaporkan ke OJK atau tidak, karena saya khawatir."
+    expect: 3
+  - feature: model_routing
+    description: route_04_astra_model_rejected
+    type: kenari_model_rejected
+    input: "gpt-6-astra"
+    expect: true

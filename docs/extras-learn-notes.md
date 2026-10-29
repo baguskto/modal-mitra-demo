@@ -21,5 +21,12 @@ worker `/learn` tidak perlu riset ulang isi fitur-fitur ini.
 - **Pertanyaan interview (30s)**: "Kenapa deteksi bahasa pakai leksikon/regex, bukan model klasifikasi?" → Jawab: korpus campur-kode Jawa/Sunda-Indonesia informal terlalu kecil & beragam ejaannya untuk model statistik umum; leksikon kata-partikel khas (presisi tinggi) konsisten dengan gaya `classifyIntent` yang sudah ada di repo ini (deterministik, murah, 0 latensi tambahan, tidak perlu panggilan LLM lagi per giliran).
 - **WOW fact**: 10/10 kalimat uji lulus (`npm run eval:extras`), 0ms panggilan network untuk deteksi.
 
-<!-- Entri berikutnya (semantic cache/routing/gateway, Workflows SLA, memori PDP, Langfuse prompt/eval)
-     ditambahkan di sini begitu fitur terkait selesai — lihat commit feat/extras berikutnya. -->
+## Level 8 — Optimasi: semantic cache + model routing/cascade + AI Gateway
+
+- **Analogi 1 kalimat**: "seperti customer service senior yang melempar pertanyaan mudah ke staf baru (murah/cepat) dan baru naik ke manajer (mahal) kalau memang rumit — dan kalau ada pertanyaan yang SAMA PERSIS maknanya baru ditanyakan lagi, tinggal baca catatan lama."
+- **Lihat di demo**: tanya pertanyaan FAQ sederhana → X-Ray `route` menunjukkan tier termurah (`deepseek-v4-1-flash`) yang menjawab; tanya lagi pertanyaan serupa (beda kata) → `cache_hit` (bila semantic cache diaktifkan).
+- **Pertanyaan interview (30s)**: "Kenapa threshold semantic cache diset 0,92 (tinggi), bukan 0,8?" → Jawab: cache hit yang salah (jawaban keliru tersaji ke pengguna) jauh lebih mahal reputasinya daripada cache miss (paling buruk cuma kembali ke jalur normal) — threshold tinggi sengaja mengorbankan recall demi precision, konsisten dengan prinsip "assertion deterministik, bukan LLM-as-judge" yang sudah dipakai di eval utama.
+- **WOW fact**: provider LLM Kenari (OpenAI-compatible) diukur langsung — tier termurah `deepseek-v4-1-flash` ~2,8s, TIDAK lebih lambat dari Workers AI qwen3 (4,4s p50 end-to-end); allowlist kode menolak model mahal (`gpt-6-astra`, ~10× lebih mahal) sebelum request terkirim.
+
+<!-- Entri berikutnya (Workflows SLA, memori PDP, Langfuse prompt/eval) ditambahkan di sini begitu
+     fitur terkait selesai — lihat commit feat/extras berikutnya. -->
