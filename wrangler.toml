@@ -1,0 +1,35 @@
+name = "modal-mitra-demo"
+main = "src/index.ts"
+compatibility_date = "2025-10-20"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = "./ui/dist"
+binding = "ASSETS"
+run_worker_first = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "modal_mitra_db"
+database_id = "a7c1f13d-1a43-46ea-9cd1-104c16cfb4a8"
+
+[[vectorize]]
+binding = "VECTORIZE"
+index_name = "modal-mitra-kb"
+
+[ai]
+binding = "AI"
+
+[[durable_objects.bindings]]
+name = "CHAT_SESSION"
+class_name = "ChatSession"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ChatSession"]
+
+[vars]
+ENV_NAME = "demo"
+MODEL_PRIMARY = "@cf/qwen/qwen3-30b-a3b-fp8"
+MODEL_GUARD = "@cf/meta/llama-guard-3-8b"
+EMBED_MODEL = "@cf/baai/bge-m3"

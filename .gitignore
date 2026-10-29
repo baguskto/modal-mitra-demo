@@ -1,0 +1,10 @@
+node_modules/
+dist/
+ui/dist/
+.wrangler/
+.env
+*.log
+data/synthetic/kb-chunks.json
+.DS_Store
+.admin-key.local
+.cs-token.local

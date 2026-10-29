@@ -1,0 +1,302 @@
+[
+  {
+    "pinjaman_no": "MMK-100001",
+    "mitra_id": "MIT-0001",
+    "produk": "Pinjaman Modal Usaha Mikro",
+    "pokok_pinjaman": 3000000,
+    "tenor_minggu": 50,
+    "angsuran_per_minggu": 67200,
+    "status": "aktif",
+    "tanggal_mulai": "2025-11-03"
+  },
+  {
+    "pinjaman_no": "MMK-100002",
+    "mitra_id": "MIT-0002",
+    "produk": "Pinjaman Modal Usaha Mikro Plus",
+    "pokok_pinjaman": 5000000,
+    "tenor_minggu": 50,
+    "angsuran_per_minggu": 112000,
+    "status": "aktif",
+    "tanggal_mulai": "2025-11-03"
+  },
+  {
+    "pinjaman_no": "MMK-100003",
+    "mitra_id": "MIT-0003",
+    "produk": "Pinjaman Modal Usaha Mikro",
+    "pokok_pinjaman": 6500000,
+    "tenor_minggu": 25,
+    "angsuran_per_minggu": 291200,
+    "status": "lunas",
+    "tanggal_mulai": "2025-08-04"
+  },
+  {
+    "pinjaman_no": "MMK-100004",
+    "mitra_id": "MIT-0004",
+    "produk": "Pinjaman Modal Usaha Mikro Plus",
+    "pokok_pinjaman": 2500000,
+    "tenor_minggu": 50,
+    "angsuran_per_minggu": 56000,
+    "status": "aktif",
+    "tanggal_mulai": "2025-08-04"
+  },
+  {
+    "pinjaman_no": "MMK-100005",
+    "mitra_id": "MIT-0005",
+    "produk": "Pinjaman Modal Usaha Mikro",
+    "pokok_pinjaman": 6000000,
+    "tenor_minggu": 25,
+    "angsuran_per_minggu": 268800,
+    "status": "aktif",
+    "tanggal_mulai": "2025-08-04"
+  },
+  {
+    "pinjaman_no": "MMK-100006",
+    "mitra_id": "MIT-0006",
+    "produk": "Pinjaman Modal Usaha Mikro Plus",
+    "pokok_pinjaman": 2000000,
+    "tenor_minggu": 50,
+    "angsuran_per_minggu": 44800,
+    "status": "aktif",
+    "tanggal_mulai": "2025-08-04"
+  },
+  {
+    "pinjaman_no": "MMK-100007",
+    "mitra_id": "MIT-0007",
+    "produk": "Pinjaman Modal Usaha Mikro",
+    "pokok_pinjaman": 5500000,
+    "tenor_minggu": 25,
+    "angsuran_per_minggu": 246400,
+    "status": "aktif",
+    "tanggal_mulai": "2025-08-04"
+  },
+  {
+    "pinjaman_no": "MMK-100008",
+    "mitra_id": "MIT-0008",
+    "produk": "Pinjaman Modal Usaha Mikro Plus",
+    "pokok_pinjaman": 9000000,
+    "tenor_minggu": 50,
+    "angsuran_per_minggu": 201600,
+    "status": "aktif",
+    "tanggal_mulai": "2025-08-04"
+  },
+  {
+    "pinjaman_no": "MMK-100009",
+    "mitra_id": "MIT-0009",
+    "produk": "Pinjaman Modal Usaha Mikro",
+    "pokok_pinjaman": 5000000,
+    "tenor_minggu": 25,
+    "angsuran_per_minggu": 224000,
+    "status": "aktif",
+    "tanggal_mulai": "2025-08-04"
+  },
+  {
+    "pinjaman_no": "MMK-100010",
+    "mitra_id": "MIT-0010",
+    "produk": "Pinjaman Modal Usaha Mikro Plus",
+    "pokok_pinjaman": 8500000,
+    "tenor_minggu": 50,
+    "angsuran_per_minggu": 190400,
+    "status": "aktif",
+    "tanggal_mulai": "2025-08-04"
+  },
+  {
+    "pinjaman_no": "MMK-100011",
+    "mitra_id": "MIT-0011",
+    "produk": "Pinjaman Modal Usaha Mikro",
+    "pokok_pinjaman": 4500000,
+    "tenor_minggu": 25,
+    "angsuran_per_minggu": 201600,
+    "status": "aktif",
+    "tanggal_mulai": "2025-08-04"
+  },
+  {
+    "pinjaman_no": "MMK-100012",
+    "mitra_id": "MIT-0012",
+    "produk": "Pinjaman Modal Usaha Mikro Plus",
+    "pokok_pinjaman": 8000000,
+    "tenor_minggu": 50,
+    "angsuran_per_minggu": 179200,
+    "status": "aktif",
+    "tanggal_mulai": "2025-08-04"
+  },
+  {
+    "pinjaman_no": "MMK-100013",
+    "mitra_id": "MIT-0013",
+    "produk": "Pinjaman Modal Usaha Mikro",
+    "pokok_pinjaman": 4000000,
+    "tenor_minggu": 25,
+    "angsuran_per_minggu": 179200,
+    "status": "aktif",
+    "tanggal_mulai": "2025-08-04"
+  },
+  {
+    "pinjaman_no": "MMK-100014",
+    "mitra_id": "MIT-0014",
+    "produk": "Pinjaman Modal Usaha Mikro Plus",
+    "pokok_pinjaman": 7500000,
+    "tenor_minggu": 50,
+    "angsuran_per_minggu": 168000,
+    "status": "aktif",
+    "tanggal_mulai": "2025-08-04"
+  },
+  {
+    "pinjaman_no": "MMK-100015",
+    "mitra_id": "MIT-0015",
+    "produk": "Pinjaman Modal Usaha Mikro",
+    "pokok_pinjaman": 3500000,
+    "tenor_minggu": 25,
+    "angsuran_per_minggu": 156800,
+    "status": "aktif",
+    "tanggal_mulai": "2025-08-04"
+  },
+  {
+    "pinjaman_no": "MMK-100016",
+    "mitra_id": "MIT-0016",
+    "produk": "Pinjaman Modal Usaha Mikro Plus",
+    "pokok_pinjaman": 7000000,
+    "tenor_minggu": 50,
+    "angsuran_per_minggu": 156800,
+    "status": "aktif",
+    "tanggal_mulai": "2025-08-04"
+  },
+  {
+    "pinjaman_no": "MMK-100017",
+    "mitra_id": "MIT-0017",
+    "produk": "Pinjaman Modal Usaha Mikro",
+    "pokok_pinjaman": 3000000,
+    "tenor_minggu": 25,
+    "angsuran_per_minggu": 134400,
+    "status": "aktif",
+    "tanggal_mulai": "2025-08-04"
+  },
+  {
+    "pinjaman_no": "MMK-100018",
+    "mitra_id": "MIT-0018",
+    "produk": "Pinjaman Modal Usaha Mikro Plus",
+    "pokok_pinjaman": 6500000,
+    "tenor_minggu": 50,
+    "angsuran_per_minggu": 145600,
+    "status": "aktif",
+    "tanggal_mulai": "2025-08-04"
+  },
+  {
+    "pinjaman_no": "MMK-100019",
+    "mitra_id": "MIT-0019",
+    "produk": "Pinjaman Modal Usaha Mikro",
+    "pokok_pinjaman": 2500000,
+    "tenor_minggu": 25,
+    "angsuran_per_minggu": 112000,
+    "status": "aktif",
+    "tanggal_mulai": "2025-08-04"
+  },
+  {
+    "pinjaman_no": "MMK-100020",
+    "mitra_id": "MIT-0020",
+    "produk": "Pinjaman Modal Usaha Mikro Plus",
+    "pokok_pinjaman": 6000000,
+    "tenor_minggu": 50,
+    "angsuran_per_minggu": 134400,
+    "status": "aktif",
+    "tanggal_mulai": "2025-08-04"
+  },
+  {
+    "pinjaman_no": "MMK-100021",
+    "mitra_id": "MIT-0021",
+    "produk": "Pinjaman Modal Usaha Mikro",
+    "pokok_pinjaman": 2000000,
+    "tenor_minggu": 25,
+    "angsuran_per_minggu": 89600,
+    "status": "aktif",
+    "tanggal_mulai": "2025-08-04"
+  },
+  {
+    "pinjaman_no": "MMK-100022",
+    "mitra_id": "MIT-0022",
+    "produk": "Pinjaman Modal Usaha Mikro Plus",
+    "pokok_pinjaman": 5500000,
+    "tenor_minggu": 50,
+    "angsuran_per_minggu": 123200,
+    "status": "aktif",
+    "tanggal_mulai": "2025-08-04"
+  },
+  {
+    "pinjaman_no": "MMK-100023",
+    "mitra_id": "MIT-0023",
+    "produk": "Pinjaman Modal Usaha Mikro",
+    "pokok_pinjaman": 9000000,
+    "tenor_minggu": 25,
+    "angsuran_per_minggu": 403200,
+    "status": "aktif",
+    "tanggal_mulai": "2025-08-04"
+  },
+  {
+    "pinjaman_no": "MMK-100024",
+    "mitra_id": "MIT-0024",
+    "produk": "Pinjaman Modal Usaha Mikro Plus",
+    "pokok_pinjaman": 5000000,
+    "tenor_minggu": 50,
+    "angsuran_per_minggu": 112000,
+    "status": "aktif",
+    "tanggal_mulai": "2025-08-04"
+  },
+  {
+    "pinjaman_no": "MMK-100025",
+    "mitra_id": "MIT-0025",
+    "produk": "Pinjaman Modal Usaha Mikro",
+    "pokok_pinjaman": 8500000,
+    "tenor_minggu": 25,
+    "angsuran_per_minggu": 380800,
+    "status": "aktif",
+    "tanggal_mulai": "2025-08-04"
+  },
+  {
+    "pinjaman_no": "MMK-100026",
+    "mitra_id": "MIT-0026",
+    "produk": "Pinjaman Modal Usaha Mikro Plus",
+    "pokok_pinjaman": 4500000,
+    "tenor_minggu": 50,
+    "angsuran_per_minggu": 100800,
+    "status": "aktif",
+    "tanggal_mulai": "2025-08-04"
+  },
+  {
+    "pinjaman_no": "MMK-100027",
+    "mitra_id": "MIT-0027",
+    "produk": "Pinjaman Modal Usaha Mikro",
+    "pokok_pinjaman": 8000000,
+    "tenor_minggu": 25,
+    "angsuran_per_minggu": 358400,
+    "status": "aktif",
+    "tanggal_mulai": "2025-08-04"
+  },
+  {
+    "pinjaman_no": "MMK-100028",
+    "mitra_id": "MIT-0028",
+    "produk": "Pinjaman Modal Usaha Mikro Plus",
+    "pokok_pinjaman": 4000000,
+    "tenor_minggu": 50,
+    "angsuran_per_minggu": 89600,
+    "status": "lunas",
+    "tanggal_mulai": "2025-08-04"
+  },
+  {
+    "pinjaman_no": "MMK-100029",
+    "mitra_id": "MIT-0029",
+    "produk": "Pinjaman Modal Usaha Mikro",
+    "pokok_pinjaman": 7500000,
+    "tenor_minggu": 25,
+    "angsuran_per_minggu": 336000,
+    "status": "aktif",
+    "tanggal_mulai": "2025-08-04"
+  },
+  {
+    "pinjaman_no": "MMK-100030",
+    "mitra_id": "MIT-0030",
+    "produk": "Pinjaman Modal Usaha Mikro Plus",
+    "pokok_pinjaman": 3500000,
+    "tenor_minggu": 50,
+    "angsuran_per_minggu": 78400,
+    "status": "aktif",
+    "tanggal_mulai": "2025-08-04"
+  }
+]

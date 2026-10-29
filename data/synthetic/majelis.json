@@ -1,0 +1,47 @@
+[
+  {
+    "majelis_id": "MJL-001",
+    "nama": "Majelis Melati 01",
+    "wilayah": "Desa Sukamaju, Kab. Bogor",
+    "hari_pertemuan": "Senin",
+    "jam_pertemuan": "09:00",
+    "pertemuan_berikutnya": "2026-11-01",
+    "petugas_lapangan": "Budi Lestari"
+  },
+  {
+    "majelis_id": "MJL-002",
+    "nama": "Majelis Mawar 02",
+    "wilayah": "Desa Cibening, Kab. Sukabumi",
+    "hari_pertemuan": "Selasa",
+    "jam_pertemuan": "09:00",
+    "pertemuan_berikutnya": "2026-11-03",
+    "petugas_lapangan": "Hendra Wijaya"
+  },
+  {
+    "majelis_id": "MJL-003",
+    "nama": "Majelis Anggrek 03",
+    "wilayah": "Desa Tanjung Harapan, Kab. Lampung Selatan",
+    "hari_pertemuan": "Rabu",
+    "jam_pertemuan": "09:00",
+    "pertemuan_berikutnya": "2026-11-05",
+    "petugas_lapangan": "Taufik Hidayat"
+  },
+  {
+    "majelis_id": "MJL-004",
+    "nama": "Majelis Kenanga 04",
+    "wilayah": "Desa Sumber Rejo, Kab. Jombang",
+    "hari_pertemuan": "Kamis",
+    "jam_pertemuan": "09:00",
+    "pertemuan_berikutnya": "2026-10-31",
+    "petugas_lapangan": "Bayu Permata"
+  },
+  {
+    "majelis_id": "MJL-005",
+    "nama": "Majelis Dahlia 05",
+    "wilayah": "Desa Karang Anyar, Kab. Gowa",
+    "hari_pertemuan": "Jumat",
+    "jam_pertemuan": "09:00",
+    "pertemuan_berikutnya": "2026-11-02",
+    "petugas_lapangan": "Eko Wardani"
+  }
+]

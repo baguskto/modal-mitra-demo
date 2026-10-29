@@ -1,0 +1,272 @@
+[
+  {
+    "mitra_id": "MIT-0001",
+    "full_name": "Sri Wahyuni",
+    "nik": "0000000202990001",
+    "phone": "081100000001",
+    "birth_date": "1985-03-12",
+    "majelis_id": "MJL-001",
+    "usaha": "Warung sembako"
+  },
+  {
+    "mitra_id": "MIT-0002",
+    "full_name": "Yanti Kusuma",
+    "nik": "0000000303990002",
+    "phone": "081100000002",
+    "birth_date": "1990-07-20",
+    "majelis_id": "MJL-002",
+    "usaha": "Jahit pakaian"
+  },
+  {
+    "mitra_id": "MIT-0003",
+    "full_name": "Rina Rahayu",
+    "nik": "0000002501990024",
+    "phone": "081100000024",
+    "birth_date": "1999-01-25",
+    "majelis_id": "MJL-005",
+    "usaha": "Budidaya lele"
+  },
+  {
+    "mitra_id": "MIT-0004",
+    "full_name": "Mira Santoso",
+    "nik": "0000000408990031",
+    "phone": "081100000031",
+    "birth_date": "1981-08-05",
+    "majelis_id": "MJL-002",
+    "usaha": "Jahit pakaian"
+  },
+  {
+    "mitra_id": "MIT-0005",
+    "full_name": "Partini Hartono",
+    "nik": "0000001103990038",
+    "phone": "081100000038",
+    "birth_date": "1988-03-12",
+    "majelis_id": "MJL-004",
+    "usaha": "Jual sayur keliling"
+  },
+  {
+    "mitra_id": "MIT-0006",
+    "full_name": "Wulan Kusuma",
+    "nik": "0000001810990045",
+    "phone": "081100000045",
+    "birth_date": "1995-10-19",
+    "majelis_id": "MJL-001",
+    "usaha": "Warung makan"
+  },
+  {
+    "mitra_id": "MIT-0007",
+    "full_name": "Tuti Setiawati",
+    "nik": "0000002505990052",
+    "phone": "081100000052",
+    "birth_date": "1977-05-26",
+    "majelis_id": "MJL-003",
+    "usaha": "Kerajinan anyaman bambu"
+  },
+  {
+    "mitra_id": "MIT-0008",
+    "full_name": "Suryani Wahyuni",
+    "nik": "0000000412990059",
+    "phone": "081100000059",
+    "birth_date": "1984-12-06",
+    "majelis_id": "MJL-005",
+    "usaha": "Ternak ayam kampung"
+  },
+  {
+    "mitra_id": "MIT-0009",
+    "full_name": "Indah Wardani",
+    "nik": "0000001107990066",
+    "phone": "081100000066",
+    "birth_date": "1991-07-13",
+    "majelis_id": "MJL-002",
+    "usaha": "Jual pulsa & sembako"
+  },
+  {
+    "mitra_id": "MIT-0010",
+    "full_name": "Nur Susanti",
+    "nik": "0000001802990073",
+    "phone": "081100000073",
+    "birth_date": "1998-02-20",
+    "majelis_id": "MJL-004",
+    "usaha": "Jual kue basah"
+  },
+  {
+    "mitra_id": "MIT-0011",
+    "full_name": "Sri Permata",
+    "nik": "0000002509990080",
+    "phone": "081100000080",
+    "birth_date": "1980-09-27",
+    "majelis_id": "MJL-001",
+    "usaha": "Warung sembako"
+  },
+  {
+    "mitra_id": "MIT-0012",
+    "full_name": "Siti Astuti",
+    "nik": "0000000404990087",
+    "phone": "081100000087",
+    "birth_date": "1987-04-07",
+    "majelis_id": "MJL-003",
+    "usaha": "Konveksi rumahan"
+  },
+  {
+    "mitra_id": "MIT-0013",
+    "full_name": "Wiwik Hidayat",
+    "nik": "0000001111990094",
+    "phone": "081100000094",
+    "birth_date": "1994-11-14",
+    "majelis_id": "MJL-005",
+    "usaha": "Budidaya lele"
+  },
+  {
+    "mitra_id": "MIT-0014",
+    "full_name": "Yanti Mulyani",
+    "nik": "0000001806990101",
+    "phone": "081100000101",
+    "birth_date": "1976-06-21",
+    "majelis_id": "MJL-002",
+    "usaha": "Jahit pakaian"
+  },
+  {
+    "mitra_id": "MIT-0015",
+    "full_name": "Fitri Wijaya",
+    "nik": "0000002501990108",
+    "phone": "081100000108",
+    "birth_date": "1983-01-01",
+    "majelis_id": "MJL-004",
+    "usaha": "Jual sayur keliling"
+  },
+  {
+    "mitra_id": "MIT-0016",
+    "full_name": "Lestari Handayani",
+    "nik": "0000000408990115",
+    "phone": "081100000115",
+    "birth_date": "1990-08-08",
+    "majelis_id": "MJL-001",
+    "usaha": "Warung makan"
+  },
+  {
+    "mitra_id": "MIT-0017",
+    "full_name": "Dewi Lestari",
+    "nik": "0000001103990122",
+    "phone": "081100000122",
+    "birth_date": "1997-03-15",
+    "majelis_id": "MJL-003",
+    "usaha": "Kerajinan anyaman bambu"
+  },
+  {
+    "mitra_id": "MIT-0018",
+    "full_name": "Ratna Rahayu",
+    "nik": "0000001810990129",
+    "phone": "081100000129",
+    "birth_date": "1979-10-22",
+    "majelis_id": "MJL-005",
+    "usaha": "Ternak ayam kampung"
+  },
+  {
+    "mitra_id": "MIT-0019",
+    "full_name": "Endang Santoso",
+    "nik": "0000002505990136",
+    "phone": "081100000136",
+    "birth_date": "1986-05-02",
+    "majelis_id": "MJL-002",
+    "usaha": "Jual pulsa & sembako"
+  },
+  {
+    "mitra_id": "MIT-0020",
+    "full_name": "Lina Hartono",
+    "nik": "0000000412990143",
+    "phone": "081100000143",
+    "birth_date": "1993-12-09",
+    "majelis_id": "MJL-004",
+    "usaha": "Jual kue basah"
+  },
+  {
+    "mitra_id": "MIT-0021",
+    "full_name": "Ani Kusuma",
+    "nik": "0000001107990150",
+    "phone": "081100000150",
+    "birth_date": "1975-07-16",
+    "majelis_id": "MJL-001",
+    "usaha": "Warung sembako"
+  },
+  {
+    "mitra_id": "MIT-0022",
+    "full_name": "Yuli Setiawati",
+    "nik": "0000001802990157",
+    "phone": "081100000157",
+    "birth_date": "1982-02-23",
+    "majelis_id": "MJL-003",
+    "usaha": "Konveksi rumahan"
+  },
+  {
+    "mitra_id": "MIT-0023",
+    "full_name": "Rina Wahyuni",
+    "nik": "0000002509990164",
+    "phone": "081100000164",
+    "birth_date": "1989-09-03",
+    "majelis_id": "MJL-005",
+    "usaha": "Budidaya lele"
+  },
+  {
+    "mitra_id": "MIT-0024",
+    "full_name": "Mira Wardani",
+    "nik": "0000000404990171",
+    "phone": "081100000171",
+    "birth_date": "1996-04-10",
+    "majelis_id": "MJL-002",
+    "usaha": "Jahit pakaian"
+  },
+  {
+    "mitra_id": "MIT-0025",
+    "full_name": "Partini Susanti",
+    "nik": "0000001111990178",
+    "phone": "081100000178",
+    "birth_date": "1978-11-17",
+    "majelis_id": "MJL-004",
+    "usaha": "Jual sayur keliling"
+  },
+  {
+    "mitra_id": "MIT-0026",
+    "full_name": "Wulan Permata",
+    "nik": "0000001806990185",
+    "phone": "081100000185",
+    "birth_date": "1985-06-24",
+    "majelis_id": "MJL-001",
+    "usaha": "Warung makan"
+  },
+  {
+    "mitra_id": "MIT-0027",
+    "full_name": "Tuti Astuti",
+    "nik": "0000002501990192",
+    "phone": "081100000192",
+    "birth_date": "1992-01-04",
+    "majelis_id": "MJL-003",
+    "usaha": "Kerajinan anyaman bambu"
+  },
+  {
+    "mitra_id": "MIT-0028",
+    "full_name": "Suryani Hidayat",
+    "nik": "0000000408990199",
+    "phone": "081100000199",
+    "birth_date": "1999-08-11",
+    "majelis_id": "MJL-005",
+    "usaha": "Ternak ayam kampung"
+  },
+  {
+    "mitra_id": "MIT-0029",
+    "full_name": "Indah Mulyani",
+    "nik": "0000001103990206",
+    "phone": "081100000206",
+    "birth_date": "1981-03-18",
+    "majelis_id": "MJL-002",
+    "usaha": "Jual pulsa & sembako"
+  },
+  {
+    "mitra_id": "MIT-0030",
+    "full_name": "Nur Wijaya",
+    "nik": "0000001810990213",
+    "phone": "081100000213",
+    "birth_date": "1988-10-25",
+    "majelis_id": "MJL-004",
+    "usaha": "Jual kue basah"
+  }
+]

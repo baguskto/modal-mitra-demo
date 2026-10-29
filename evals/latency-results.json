@@ -1,0 +1,112 @@
+{
+  "baseUrl": "https://modal-mitra-demo.markas-auracheck.workers.dev",
+  "measuredAt": "2026-10-29T11:30:11.229Z",
+  "n": 18,
+  "firstTokenMs": {
+    "p50": 1981,
+    "p95": 15756,
+    "min": 0,
+    "max": 15756
+  },
+  "totalMs": {
+    "p50": 4405,
+    "p95": 18492,
+    "min": 291,
+    "max": 18492
+  },
+  "byCase": [
+    {
+      "label": "rag_simple",
+      "firstTokenMs": 1781,
+      "totalMs": 2627
+    },
+    {
+      "label": "rag_simple",
+      "firstTokenMs": 1863,
+      "totalMs": 2493
+    },
+    {
+      "label": "rag_simple",
+      "firstTokenMs": 1981,
+      "totalMs": 2935
+    },
+    {
+      "label": "verify_plus_lookup",
+      "firstTokenMs": 5188,
+      "totalMs": 5908
+    },
+    {
+      "label": "verify_plus_lookup",
+      "firstTokenMs": 7115,
+      "totalMs": 7601
+    },
+    {
+      "label": "verify_plus_lookup",
+      "firstTokenMs": 3840,
+      "totalMs": 4758
+    },
+    {
+      "label": "majelis_schedule",
+      "firstTokenMs": 3865,
+      "totalMs": 4405
+    },
+    {
+      "label": "majelis_schedule",
+      "firstTokenMs": 3204,
+      "totalMs": 3708
+    },
+    {
+      "label": "majelis_schedule",
+      "firstTokenMs": 2780,
+      "totalMs": 3266
+    },
+    {
+      "label": "pendana_portfolio",
+      "firstTokenMs": 6596,
+      "totalMs": 9170
+    },
+    {
+      "label": "pendana_portfolio",
+      "firstTokenMs": 9726,
+      "totalMs": 12336
+    },
+    {
+      "label": "pendana_portfolio",
+      "firstTokenMs": 15756,
+      "totalMs": 18492
+    },
+    {
+      "label": "guard_blocked_scope",
+      "firstTokenMs": 0,
+      "totalMs": 291,
+      "blockedByGuard": "scope"
+    },
+    {
+      "label": "guard_blocked_scope",
+      "firstTokenMs": 0,
+      "totalMs": 7201,
+      "blockedByGuard": "scope"
+    },
+    {
+      "label": "guard_blocked_scope",
+      "firstTokenMs": 0,
+      "totalMs": 341,
+      "blockedByGuard": "scope"
+    },
+    {
+      "label": "handoff_explicit",
+      "firstTokenMs": 0,
+      "totalMs": 5608
+    },
+    {
+      "label": "handoff_explicit",
+      "firstTokenMs": 0,
+      "totalMs": 5990
+    },
+    {
+      "label": "handoff_explicit",
+      "firstTokenMs": 0,
+      "totalMs": 629
+    }
+  ]
+}

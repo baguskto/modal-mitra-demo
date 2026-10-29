@@ -1,0 +1,82 @@
+[
+  {
+    "pendana_id": "PND-0001",
+    "full_name": "Andi Pratama",
+    "email": "andi.demo@example.test",
+    "phone": "081299990001",
+    "birth_date": "1992-01-15",
+    "risk_profile": "moderat"
+  },
+  {
+    "pendana_id": "PND-0002",
+    "full_name": "Budi Hartono",
+    "email": "budi.demo@example.test",
+    "phone": "081299990002",
+    "birth_date": "1988-09-09",
+    "risk_profile": "konservatif"
+  },
+  {
+    "pendana_id": "PND-0003",
+    "full_name": "Agus Rahayu",
+    "email": null,
+    "phone": "081200000038",
+    "birth_date": "1998-03-12",
+    "risk_profile": "agresif"
+  },
+  {
+    "pendana_id": "PND-0004",
+    "full_name": "Fajar Permata",
+    "email": null,
+    "phone": "081200000049",
+    "birth_date": "1989-02-23",
+    "risk_profile": "moderat"
+  },
+  {
+    "pendana_id": "PND-0005",
+    "full_name": "Andi Santoso",
+    "email": null,
+    "phone": "081200000060",
+    "birth_date": "1980-01-07",
+    "risk_profile": "konservatif"
+  },
+  {
+    "pendana_id": "PND-0006",
+    "full_name": "Budi Astuti",
+    "email": null,
+    "phone": "081200000071",
+    "birth_date": "1991-12-18",
+    "risk_profile": "agresif"
+  },
+  {
+    "pendana_id": "PND-0007",
+    "full_name": "Hendra Hartono",
+    "email": null,
+    "phone": "081200000082",
+    "birth_date": "1982-11-02",
+    "risk_profile": "moderat"
+  },
+  {
+    "pendana_id": "PND-0008",
+    "full_name": "Taufik Hidayat",
+    "email": null,
+    "phone": "081200000093",
+    "birth_date": "1993-10-13",
+    "risk_profile": "konservatif"
+  },
+  {
+    "pendana_id": "PND-0009",
+    "full_name": "Bayu Kusuma",
+    "email": null,
+    "phone": "081200000104",
+    "birth_date": "1984-09-24",
+    "risk_profile": "agresif"
+  },
+  {
+    "pendana_id": "PND-0010",
+    "full_name": "Eko Mulyani",
+    "email": null,
+    "phone": "081200000115",
+    "birth_date": "1995-08-08",
+    "risk_profile": "moderat"
+  }
+]
