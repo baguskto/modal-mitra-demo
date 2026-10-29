@@ -17,7 +17,9 @@
     "eval": "tsx scripts/run-eval.ts",
     "latency": "tsx scripts/measure-latency.ts",
     "eval:langfuse:push": "tsx scripts/push-golden-to-langfuse.ts",
-    "eval:langfuse:run": "tsx scripts/run-langfuse-eval.ts"
+    "eval:langfuse:run": "tsx scripts/run-langfuse-eval.ts",
+    "test:extras": "vitest run tests/extras --pool=threads --poolOptions.threads.maxThreads=2 --poolOptions.threads.minThreads=1",
+    "eval:extras": "tsx scripts/run-extras-eval.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20251020.0",
@@ -28,7 +30,9 @@
     "tsx": "^4.19.2",
     "typescript": "^5.6.3",
     "vite": "^5.4.11",
-    "wrangler": "^3.90.0"
+    "vitest": "^1.6.1",
+    "wrangler": "^3.90.0",
+    "yaml": "^2.9.1"
   },
   "dependencies": {
     "@ai-sdk/react": "^4.0.160",

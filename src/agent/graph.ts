@@ -48,6 +48,10 @@ const AgentState = z.object({
   userText: z.string(),
   verifiedActorId: z.string().nullable(),
   failedUnderstandingCount: z.number().default(0),
+  // feat/extras fitur #2 (deteksi bahasa) — dihitung sekali di ChatAgent.onChatMessage sebelum
+  // graph dipanggil (heuristik murah, tanpa LLM, lihat src/extras/language/) dan ditempelkan ke
+  // system prompt di node respond (bukan field terpisah yang sengaja di-skip di sini).
+  styleInstruction: z.string().optional(),
 
   redacted: z.string().default(""),
   vaultEntries: z.array(z.tuple([z.string(), z.string()])).default([]),
@@ -310,7 +314,7 @@ async function nodeTools(state: State, config: any): Promise<Partial<State>> {
   if (state.autoRestru) ragContext += `\n---\n${wrapAsData("restrukturisasi_otomatis", JSON.stringify(state.autoRestru))}\nSistem sudah mencatat permintaan restrukturisasi/keringanan ini sebagai ${state.autoRestru.restru_id}. Jelaskan bahwa ini akan ditinjau petugas lapangan/tim kredit, TIDAK ADA keputusan/jaminan otomatis, sebutkan nomor ${state.autoRestru.restru_id}.`;
 
   const messages: ChatMessage[] = [
-    { role: "system", content: buildSystemPrompt(state.persona as Persona, verifiedActorId) },
+    { role: "system", content: buildSystemPrompt(state.persona as Persona, verifiedActorId, state.styleInstruction) },
     { role: "user", content: buildUserTurn(state.redacted, wrapAsData("konteks_rag", ragContext)) },
   ];
 
@@ -504,6 +508,7 @@ export interface AgentTurnInput {
   userText: string;
   verifiedActorId: string | null;
   failedUnderstandingCount: number;
+  styleInstruction?: string;
 }
 
 export interface AgentTurnOutput {
@@ -543,6 +548,7 @@ export async function runAgentGraph(env: AgentEnvBindings, input: AgentTurnInput
     userText: input.userText,
     verifiedActorId: input.verifiedActorId,
     failedUnderstandingCount: input.failedUnderstandingCount,
+    styleInstruction: input.styleInstruction,
     redacted: "",
     vaultEntries: [],
     allowedIds: input.verifiedActorId ? [input.verifiedActorId.toUpperCase()] : [],

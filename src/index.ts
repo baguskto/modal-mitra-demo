@@ -2,10 +2,12 @@ import { Hono } from "hono";
 import { ChatAgent } from "./do/ChatAgent";
 import { signPresenterToken, verifyPresenterToken, readCookie, presenterCookieHeader, clearPresenterCookieHeader } from "./security/presenter";
 import { checkIpRateLimit } from "./security/rateLimit";
+import { extrasApp, type ExtrasAppEnv } from "./extras/router";
 
 export { ChatAgent };
+export { SlaEscalationWorkflow } from "./extras/workflows/slaEscalationWorkflow";
 
-export interface Env {
+export interface Env extends ExtrasAppEnv {
   AI: Ai;
   VECTORIZE: VectorizeIndex;
   DB: D1Database;
@@ -267,6 +269,12 @@ app.get("/api/kpi", async (c) => {
 });
 
 app.get("/api/health", (c) => c.json({ ok: true, env: "demo" }));
+
+// feat/extras — satu titik integrasi untuk voice/STT-TTS, bahasa, semantic cache+routing, SLA
+// Workflows, memori jangka panjang, dan Langfuse prompt-mgmt/online-eval (lihat src/extras/router.ts).
+// Modul mandiri: tiap route mengecek feature flag-nya sendiri (FEATURE_* di wrangler.toml [vars]),
+// aman dipasang walau sebagian fitur masih OFF.
+app.route("/api/extras", extrasApp);
 
 // Ingest KB ke Vectorize. Dipanggil sekali (atau tiap KB berubah) oleh scripts/run-ingest.ts,
 // bukan jalur produksi pengguna -> dilindungi header x-admin-key (wrangler secret ADMIN_KEY).

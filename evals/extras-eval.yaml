@@ -1,0 +1,134 @@
+# Golden set untuk fitur tambahan (feat/extras) — format mirip evals/promptfooconfig.yaml tapi
+# dieksekusi via scripts/run-extras-eval.ts (unit-level, langsung memanggil fungsi murni di
+# src/extras/*, TANPA endpoint live) karena fitur-fitur ini belum digabung ke ChatAgent/graph oleh
+# worker inti saat worktree ini ditulis. Begitu digabung, kasus bertipe *_live bisa ditambah untuk
+# menembak endpoint sungguhan seperti golden set utama.
+#
+# Jalankan: npx tsx scripts/run-extras-eval.ts
+
+cases:
+  # --- Fitur #2: deteksi bahasa (brief: "test 10 kalimat") ---
+  - feature: language
+    description: lang_01_formal_status_pengajuan
+    type: language_equals
+    input: "Selamat siang, saya ingin menanyakan status pengajuan pinjaman saya."
+    expect: id_formal
+  - feature: language
+    description: lang_02_informal_cek_angsuran
+    type: language_equals
+    input: "min, cek dong sisa angsuran aq yg bulan ini brp"
+    expect: id_informal
+  - feature: language
+    description: lang_03_informal_keringanan
+    type: language_equals
+    input: "kak tlg bantu aq, gmn caranya ajukan keringanan"
+    expect: id_informal
+  - feature: language
+    description: lang_04_jawa_cair_pinjaman
+    type: language_equals
+    input: "Kulo badhe tanglet, pinjaman kulo niki sampun cair dereng nggih?"
+    expect: jv
+  - feature: language
+    description: lang_05_jawa_bayar_angsuran
+    type: language_equals
+    input: "Monggo, sampeyan saged bantu kula pripun carane bayar angsuran?"
+    expect: jv
+  - feature: language
+    description: lang_06_sunda_angsuran
+    type: language_equals
+    input: "Punten abdi bade tumaros, angsuran abdi tos dibayar teu acan nya?"
+    expect: su
+  - feature: language
+    description: lang_07_sunda_restrukturisasi
+    type: language_equals
+    input: "Kumaha carana ngajukeun restrukturisasi, kedah ka kantor atanapi tiasa online?"
+    expect: su
+  - feature: language
+    description: lang_08_formal_jadwal_majelis
+    type: language_equals
+    input: "Mohon informasi mengenai jadwal pertemuan majelis minggu ini."
+    expect: id_formal
+  - feature: language
+    description: lang_09_informal_login
+    type: language_equals
+    input: "ga ngerti knp td ga bisa login, pls bantu cek ya kak"
+    expect: id_informal
+  - feature: language
+    description: lang_10_formal_terima_kasih
+    type: language_equals
+    input: "Terima kasih atas informasinya, akan saya pertimbangkan lebih lanjut."
+    expect: id_formal
+
+  # --- Fitur #3: model routing/cascade (Kenari tier 1/2/3 + fallback Workers AI) ---
+  - feature: model_routing
+    description: route_01_simple_starts_tier1
+    type: complexity_starts_tier
+    input: "halo"
+    expect: 1
+  - feature: model_routing
+    description: route_02_tool_step_escalates_tier2
+    type: complexity_starts_tier
+    input: "cek status pengajuan saya"
+    step_index: 1
+    expect: 2
+  - feature: model_routing
+    description: route_03_complex_starts_tier3
+    type: complexity_starts_tier
+    input: "Saya mau tanya karena bulan ini saya telat bayar dan ingin tahu apakah bisa restrukturisasi, tapi juga ingin tahu dampaknya ke skor kelompok karena takut memberatkan anggota lain, dan juga ingin tahu apakah ini akan dilaporkan ke OJK atau tidak, karena saya khawatir."
+    expect: 3
+  - feature: model_routing
+    description: route_04_astra_model_rejected
+    type: kenari_model_rejected
+    input: "gpt-6-astra"
+    expect: true
+
+  # --- Fitur #4: Cloudflare Workflows SLA/eskalasi handoff ---
+  - feature: sla_workflow
+    description: sla_01_cs_never_responded_escalates
+    type: sla_decision_equals
+    session_row: { mode: "HUMAN", last_sender: "ai", handoff_at: "2026-10-30T00:00:00Z" }
+    expect: escalated
+  - feature: sla_workflow
+    description: sla_02_cs_already_responded_resolved
+    type: sla_decision_equals
+    session_row: { mode: "HUMAN", last_sender: "human", handoff_at: "2026-10-30T00:00:00Z" }
+    expect: resolved_in_time
+  - feature: sla_workflow
+    description: sla_03_released_back_to_ai_resolved
+    type: sla_decision_equals
+    session_row: { mode: "AI", last_sender: "ai", handoff_at: "2026-10-30T00:00:00Z" }
+    expect: resolved_in_time
+
+  # --- Fitur #5: memori jangka panjang (consent-gated) + hak hapus PDP ---
+  - feature: long_term_memory
+    description: memory_01_no_consent_blocks_write
+    type: memory_write_allowed
+    consent_given: false
+    input: "Lebih suka gaya bahasa Jawa informal."
+    expect: false
+  - feature: long_term_memory
+    description: memory_02_consent_clean_summary_allowed
+    type: memory_write_allowed
+    consent_given: true
+    input: "Lebih suka gaya bahasa Jawa informal, sering tanya soal restrukturisasi."
+    expect: true
+  - feature: long_term_memory
+    description: memory_03_consent_but_pii_blocked
+    type: memory_write_allowed
+    consent_given: true
+    input: "HP mitra 081234567890, suka dihubungi sore."
+    expect: false
+
+  # --- Fitur #6: Langfuse prompt management + online eval ---
+  - feature: langfuse
+    description: lf_01_prompt_template_substitution
+    type: prompt_compile_equals
+    input: "Halo {{nama}}, status pinjaman Anda: {{status}}."
+    vars: { nama: "Sri", status: "lunas" }
+    expect: "Halo Sri, status pinjaman Anda: lunas."
+  - feature: langfuse
+    description: lf_02_unknown_placeholder_left_untouched
+    type: prompt_compile_equals
+    input: "Halo {{nama}}"
+    vars: {}
+    expect: "Halo {{nama}}"

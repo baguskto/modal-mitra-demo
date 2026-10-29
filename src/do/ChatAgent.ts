@@ -21,8 +21,11 @@ import type { Connection, ConnectionContext, WSMessage } from "agents";
 import { runAgentGraph, relayFinalText, type AgentEnvBindings } from "../agent/graph";
 import { callChatModel } from "../agent/llm";
 import { appendAuditLog, verifyChain, configureAuditHmac } from "../obs/audit";
-import { startTrace, pseudonymize, type LangfuseConfig, type XrayEvent } from "../obs/langfuse";
+import { startTrace, pseudonymize, extrasXrayToMain, type LangfuseConfig, type XrayEvent } from "../obs/langfuse";
 import type { Persona } from "../agent/router";
+import { detectAndStyle } from "../extras/language";
+import { readFeatureFlags } from "../extras/config";
+import type { SlaWorkflowParams } from "../extras/workflows/slaEscalationWorkflow";
 
 export interface ChatAgentEnv extends AgentEnvBindings {
   DB: D1Database;
@@ -32,6 +35,12 @@ export interface ChatAgentEnv extends AgentEnvBindings {
   LANGFUSE_SECRET_KEY?: string;
   PRESENTER_KEY?: string;
   AUDIT_HMAC_KEY?: string;
+  // feat/extras — deteksi bahasa (#2, gratis/tanpa LLM) & SLA Workflow (#4) dipanggil langsung
+  // dari ChatAgent (bukan lewat HTTP /api/extras, tidak perlu 1 hop tambahan dari sini).
+  FEATURE_LANG_DETECT?: string;
+  FEATURE_SLA_WORKFLOW?: string;
+  SLA_MINUTES?: string;
+  SLA_WORKFLOW?: Workflow<SlaWorkflowParams>;
 }
 
 interface SessionMeta {
@@ -242,9 +251,19 @@ export class ChatAgent extends AIChatAgent<ChatAgentEnv, SessionMeta> {
     const xray = this.makeXrayRecorder();
     const trace = startTrace(this.langfuseConfig(), "chat_turn", { persona, userTextLen: userText.length }, { sessionId, persona, channel: "websocket" }, undefined, pseudoSession, xray.onXray);
 
+    // feat/extras #2 — heuristik murah (regex/leksikon, TANPA panggilan LLM, lihat
+    // src/extras/language/detect.ts), aman dipanggil di setiap giliran. Event X-Ray diadaptasi ke
+    // skema inti (extrasXrayToMain, lihat src/obs/langfuse.ts) lewat jalur broadcast yang sama.
+    let styleInstruction: string | undefined;
+    if (readFeatureFlags(this.env).langDetect) {
+      const lang = detectAndStyle(userText, pseudoSession);
+      styleInstruction = lang.styleInstruction;
+      xray.onXray(extrasXrayToMain(lang.xray));
+    }
+
     const result = await runAgentGraph(
       this.env,
-      { sessionId, persona, userText, verifiedActorId: this.state.verifiedActorId, failedUnderstandingCount: this.state.failedUnderstandingCount },
+      { sessionId, persona, userText, verifiedActorId: this.state.verifiedActorId, failedUnderstandingCount: this.state.failedUnderstandingCount, styleInstruction },
       trace,
     );
 
@@ -254,6 +273,17 @@ export class ChatAgent extends AIChatAgent<ChatAgentEnv, SessionMeta> {
       handoffAt = new Date().toISOString();
       handoffSummary = await this.summarizeForHandoff();
       await appendAuditLog(this.env.DB, sessionId, "system", "mode_change", { mode: "HUMAN", reason: result.handoff.reason });
+      // feat/extras #4 — timer durable (Cloudflare Workflows, bertahan lintas restart/deploy,
+      // TIDAK seperti setTimeout) yang mengecek N menit kemudian apakah CS sudah membalas (baca
+      // sessions_index, lihat src/extras/workflows/). Tidak pernah melempar ke pemanggil — gagal
+      // start Workflow TIDAK BOLEH menjatuhkan giliran handoff itu sendiri.
+      if (readFeatureFlags(this.env).slaWorkflow && this.env.SLA_WORKFLOW) {
+        try {
+          await this.env.SLA_WORKFLOW.create({ params: { sessionId, slaMinutes: Number(this.env.SLA_MINUTES ?? 5) } });
+        } catch (err) {
+          console.error("SLA_WORKFLOW.create gagal (non-fatal):", err);
+        }
+      }
     }
 
     this.setState({

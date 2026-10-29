@@ -39,12 +39,26 @@ export async function pseudonymize(value: string, salt: string): Promise<string>
  * sengaja: tanpa teks mentah pengguna/LLM (lihat README §"Untuk halaman visual") — aman untuk
  * mode Publik (PII selalu termask di sini, bukan hanya "di-mask" setelah fakta). Detail generation
  * (teks LLM penuh) tetap ADA tapi hanya di Langfuse (link presenter-only), bukan di event ini. */
+// `node` DIPERLUAS (bukan lagi union 6 nama tetap) saat merge feat/extras: modul extras punya
+// event sendiri dgn skema berbeda (src/extras/xray.ts `ExtrasXrayEvent`: {type,at,data}, bukan
+// {node,phase,ts}). Daripada memaksa event itu masuk 6 node graph (tidak pas secara makna —
+// 'cache_hit'/'stt'/'sla_escalated' bukan node LangGraph), extrasXrayToMain() di bawah mengadaptasi
+// field-nya ke bentuk XrayEvent supaya lewat SATU jalur broadcast (xray_event) yang sudah ada;
+// frontend (ChatPanel.tsx) sudah toleran — hanya 6 nama di GRAPH_NODES yang digambar di panel
+// pipeline, nama lain otomatis tetap tampil di "Log event" (xrayLog) di bawahnya.
+export type XrayNode = "guard_in" | "verify_identity" | "route_intent" | "tools" | "guard_out" | "respond" | (string & {});
+
 export interface XrayEvent {
-  node: "guard_in" | "verify_identity" | "route_intent" | "tools" | "guard_out" | "respond";
+  node: XrayNode;
   phase: "start" | "end";
   ts: string;
   durationMs?: number;
   data: Record<string, unknown>;
+}
+
+/** Adapter skema extras -> skema inti (lihat komentar XrayEvent di atas). */
+export function extrasXrayToMain(ev: { type: string; at: string; data: Record<string, unknown> }): XrayEvent {
+  return { node: ev.type, phase: "end", ts: ev.at, data: ev.data };
 }
 
 export class LangfuseTrace {

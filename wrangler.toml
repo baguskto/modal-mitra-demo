@@ -20,12 +20,28 @@ database_id = "a7c1f13d-1a43-46ea-9cd1-104c16cfb4a8"
 binding = "VECTORIZE"
 index_name = "modal-mitra-kb"
 
+# feat/extras — index TERPISAH dari KB untuk semantic cache (src/extras/cache/semanticCache.ts),
+# supaya vektor cache tidak bercampur dgn vektor dokumen RAG. Perlu dibuat sekali:
+#   npx wrangler vectorize create modal-mitra-semantic-cache --dimensions=1024 --metric=cosine
+[[vectorize]]
+binding = "CACHE_VECTORIZE"
+index_name = "modal-mitra-semantic-cache"
+
 [ai]
 binding = "AI"
 
 [[durable_objects.bindings]]
 name = "CHAT_AGENT"
 class_name = "ChatAgent"
+
+# feat/extras — fitur #4 (Cloudflare Workflows SLA/eskalasi handoff, src/extras/workflows/).
+# class_name HARUS diekspor dari entrypoint worker (main) — worker inti cukup
+# `export { SlaEscalationWorkflow } from "./extras/workflows/slaEscalationWorkflow";` di
+# src/index.ts saat menggabungkan.
+[[workflows]]
+binding = "SLA_WORKFLOW"
+name = "modal-mitra-sla-escalation"
+class_name = "SlaEscalationWorkflow"
 
 [[migrations]]
 tag = "v1"
@@ -37,3 +53,19 @@ MODEL_PRIMARY = "@cf/qwen/qwen3-30b-a3b-fp8"
 MODEL_GUARD = "@cf/meta/llama-guard-3-8b"
 EMBED_MODEL = "@cf/baai/bge-m3"
 LANGFUSE_BASE_URL = "https://jp.cloud.langfuse.com"
+
+# feat/extras — toggle fitur tambahan (lihat src/extras/config.ts), aman dimatikan tanpa redeploy
+# kode. Secret (KENARI_API_KEY, LANGFUSE_*) SELALU lewat `wrangler secret put`, TIDAK di [vars].
+# Semantic cache/AI Gateway/long-term memory/prompt-mgmt/online-eval TETAP "false" di merge ini —
+# masing-masing butuh resource terpisah yang belum ada di akun demo (lihat README §Keputusan
+# Desain "feat/extras"); voice, deteksi bahasa, dan SLA workflow sudah teruji & aman dinyalakan.
+FEATURE_VOICE = "true"
+FEATURE_LANG_DETECT = "true"
+FEATURE_SEMANTIC_CACHE = "false"
+FEATURE_MODEL_ROUTING = "true"
+FEATURE_AI_GATEWAY = "false"
+FEATURE_SLA_WORKFLOW = "true"
+FEATURE_LONG_TERM_MEMORY = "false"
+FEATURE_PROMPT_MGMT = "false"
+FEATURE_ONLINE_EVAL = "false"
+SLA_MINUTES = "5"
