@@ -1,14 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { connectChatSocket } from "./api";
-
-interface Msg {
-  role: "user" | "ai" | "human" | "system";
-  text: string;
-  citations?: string[];
-  ts: string;
-  pending?: boolean;
-  blockedByGuard?: string;
-}
+import { useAgent } from "agents/react";
+import { useAgentChat } from "@cloudflare/ai-chat/react";
 
 type Persona = "mitra" | "pendana";
 
@@ -24,79 +16,68 @@ const QUICK_FILL: Record<Persona, { label: string; text: string }[]> = {
   ],
 };
 
+function textOfParts(parts: any[]): string {
+  return (parts ?? []).filter((p) => p.type === "text").map((p) => p.text).join("");
+}
+function metaOfParts(parts: any[]): any {
+  return (parts ?? []).find((p) => p.type === "data-meta")?.data ?? null;
+}
+
+// Migrasi dari WebSocket kustom manual (lihat tag git `v1-pre-agents-sdk`, ui/src/ChatPanel.tsx)
+// ke `useAgent`+`useAgentChat` (Cloudflare Agents SDK) — persistensi pesan & resumable streaming
+// otomatis dari server (src/do/ChatAgent.ts). Event non-chat (init/mode_change/typing CS) tetap
+// lewat `onMessage` kustom di koneksi yang SAMA (protokol kustom ringan, lihat ChatAgent.ts).
 export default function ChatPanel({ sessionId }: { sessionId: string }) {
   const [persona, setPersona] = useState<Persona>("mitra");
   const [personaLocked, setPersonaLocked] = useState(false);
-  const [history, setHistory] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<"AI" | "HUMAN">("AI");
-  const [aiTyping, setAiTyping] = useState(false);
   const [humanTyping, setHumanTyping] = useState(false);
   const [connected, setConnected] = useState(false);
   const [handoffSummary, setHandoffSummary] = useState<string | null>(null);
-  const [lastTiming, setLastTiming] = useState<{ firstTokenMs: number | null; totalMs: number } | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const wsRef = useRef<WebSocket | null>(null);
   const typingTimeoutRef = useRef<number | undefined>(undefined);
 
-  useEffect(() => {
-    const ws = connectChatSocket(sessionId);
-    wsRef.current = ws;
-    ws.onopen = () => setConnected(true);
-    ws.onclose = () => setConnected(false);
-    ws.onmessage = (ev) => {
-      const msg = JSON.parse(ev.data);
+  const agent = useAgent({
+    agent: "ChatAgent",
+    basePath: `api/chat/${encodeURIComponent(sessionId)}/ws`,
+    onOpen: () => setConnected(true),
+    onClose: () => setConnected(false),
+    onMessage: (event: MessageEvent) => {
+      let msg: any;
+      try {
+        msg = JSON.parse(event.data);
+      } catch {
+        return;
+      }
       if (msg.type === "init") {
-        setHistory(msg.history ?? []);
         setMode(msg.mode ?? "AI");
         if (msg.persona) {
           setPersona(msg.persona);
           if ((msg.history ?? []).length > 0) setPersonaLocked(true);
         }
         setHandoffSummary(msg.handoffSummary ?? null);
-      } else if (msg.type === "message") {
-        setHistory((h) => {
-          const withoutPending = h.filter((m) => !m.pending);
-          return [...withoutPending, { role: msg.role, text: msg.text, citations: msg.citations, ts: msg.ts }];
-        });
-        if (msg.role === "ai") setLastTiming(msg.timing ?? null);
-        if (msg.role !== "system") setAiTyping(false);
-      } else if (msg.type === "retracted") {
-        setHistory((h) => {
-          const withoutPending = h.filter((m) => !m.pending);
-          return [...withoutPending, { role: "ai", text: msg.text, citations: msg.citations, ts: msg.ts, blockedByGuard: msg.blockedByGuard }];
-        });
-        setAiTyping(false);
-      } else if (msg.type === "ai_typing_start") {
-        setAiTyping(true);
-        setHistory((h) => [...h, { role: "ai", text: "", ts: new Date().toISOString(), pending: true }]);
-      } else if (msg.type === "ai_typing_end") {
-        setAiTyping(false);
-      } else if (msg.type === "token") {
-        setHistory((h) => {
-          if (h.length === 0 || !h[h.length - 1].pending) return h;
-          const copy = [...h];
-          copy[copy.length - 1] = { ...copy[copy.length - 1], text: copy[copy.length - 1].text + msg.text };
-          return copy;
-        });
-      } else if (msg.type === "typing" && msg.role === "cs") {
-        setHumanTyping(!!msg.isTyping);
       } else if (msg.type === "mode_change") {
         setMode(msg.mode);
-        if (msg.mode === "HUMAN") setHandoffSummary(msg.summary ?? null);
-        else setHandoffSummary(null);
+        setHandoffSummary(msg.mode === "HUMAN" ? (msg.summary ?? null) : null);
+      } else if (msg.type === "typing" && msg.role === "cs") {
+        setHumanTyping(!!msg.isTyping);
       }
-    };
-    return () => ws.close();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId]);
+    },
+  });
+
+  const { messages, sendMessage, status } = useAgentChat({ agent, body: () => ({ persona }) });
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [history, aiTyping]);
+  }, [messages, status]);
 
   function notifyTyping(isTyping: boolean) {
-    wsRef.current?.readyState === WebSocket.OPEN && wsRef.current.send(JSON.stringify({ type: "typing", isTyping }));
+    try {
+      (agent as any).send?.(JSON.stringify({ type: "typing", isTyping }));
+    } catch {
+      // koneksi belum siap, aman diabaikan
+    }
   }
 
   function onInputChange(v: string) {
@@ -108,12 +89,14 @@ export default function ChatPanel({ sessionId }: { sessionId: string }) {
 
   function send(text?: string) {
     const payload = (text ?? input).trim();
-    if (!payload || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    wsRef.current.send(JSON.stringify({ type: "user_message", text: payload, persona }));
+    if (!payload || mode === "HUMAN") return;
+    sendMessage({ role: "user", parts: [{ type: "text", text: payload }] } as any);
     setPersonaLocked(true);
     setInput("");
     notifyTyping(false);
   }
+
+  const aiTyping = status === "submitted" || status === "streaming";
 
   return (
     <div className="wa-shell">
@@ -145,7 +128,7 @@ export default function ChatPanel({ sessionId }: { sessionId: string }) {
       )}
 
       <div className="wa-messages">
-        {history.length === 0 && (
+        {messages.length === 0 && (
           <div className="wa-quickfill">
             <div className="hint">Coba skenario demo:</div>
             {QUICK_FILL[persona].map((q) => (
@@ -153,29 +136,30 @@ export default function ChatPanel({ sessionId }: { sessionId: string }) {
             ))}
           </div>
         )}
-        {history.map((m, i) => (
-          <div key={i} className={`wa-bubble-row ${m.role === "user" ? "out" : "in"}`}>
-            <div className={`wa-bubble ${m.role} ${m.blockedByGuard ? "guarded" : ""}`}>
-              {m.pending && m.text === "" ? (
-                <span className="wa-typing-dots"><span /><span /><span /></span>
-              ) : (
-                <>
-                  {m.text}
-                  {m.citations && m.citations.length > 0 && <div className="wa-citations">Sumber: {m.citations.join(", ")}</div>}
-                </>
-              )}
-              <div className="wa-ts">{new Date(m.ts).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}</div>
+        {messages.map((m: any, i) => {
+          const isUser = m.role === "user";
+          const isHuman = m.role === "assistant" && m.metadata?.source === "human";
+          const text = textOfParts(m.parts);
+          const meta = metaOfParts(m.parts);
+          const roleClass = isUser ? "user" : isHuman ? "human" : "ai";
+          return (
+            <div key={m.id ?? i} className={`wa-bubble-row ${isUser ? "out" : "in"}`}>
+              <div className={`wa-bubble ${roleClass} ${meta?.blockedByGuard ? "guarded" : ""}`}>
+                {text}
+                {meta?.citations?.length > 0 && <div className="wa-citations">Sumber: {meta.citations.join(", ")}</div>}
+              </div>
+            </div>
+          );
+        })}
+        {aiTyping && (
+          <div className="wa-bubble-row in">
+            <div className="wa-bubble ai">
+              <span className="wa-typing-dots"><span /><span /><span /></span>
             </div>
           </div>
-        ))}
+        )}
         <div ref={bottomRef} />
       </div>
-
-      {lastTiming && (
-        <div className="wa-latency">
-          ⚡ first token {lastTiming.firstTokenMs ?? "-"}ms · total {lastTiming.totalMs}ms
-        </div>
-      )}
 
       <div className="wa-input-row">
         <input

@@ -1,3 +1,5 @@
+import { kenariEmbed } from "./kenari";
+
 export interface RetrievedChunk {
   id: string; // format doc_id#chunk_id, dipakai sebagai token sitasi [doc_id#chunk_id]
   docId: string;
@@ -14,9 +16,26 @@ export async function retrieve(
   embedModel: string,
   query: string,
   topK = 8,
+  kenariApiKey?: string,
 ): Promise<RetrievedChunk[]> {
-  const embedRes: any = await ai.run(embedModel as any, { text: [query] });
-  const vector: number[] = embedRes?.data?.[0] ?? embedRes?.[0];
+  // Kenari dicoba LEBIH DULU saat ini (lihat alasan terukur di agent/llm.ts) — endpoint
+  // /v1/embeddings model "bge-m3" mengembalikan 1024 dimensi, IDENTIK dengan index Vectorize ini,
+  // jadi bisa dipakai langsung. Workers AI (`embedModel`) tetap cadangan.
+  let vector: number[] | null = null;
+  if (kenariApiKey) {
+    vector = await kenariEmbed(kenariApiKey, query);
+  }
+  if (!vector) {
+    try {
+      const embedRes: any = await ai.run(embedModel as any, { text: [query] });
+      vector = embedRes?.data?.[0] ?? embedRes?.[0] ?? null;
+    } catch (err: any) {
+      // Degradasi anggun: kuota/ketersediaan Workers AI terganggu -> RAG kosong (jalur fallback
+      // "tidak ditemukan"/handoff yang SUDAH ada menangani ini), bukan menjatuhkan seluruh giliran.
+      console.error("rag_embed_error", err?.message ?? String(err));
+      return [];
+    }
+  }
   if (!vector) return [];
 
   const result = await vectorize.query(vector, { topK, returnMetadata: "all" });

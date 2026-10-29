@@ -1,19 +1,24 @@
 import { Hono } from "hono";
-import { ChatSession } from "./do/ChatSession";
+import { ChatAgent } from "./do/ChatAgent";
 
-export { ChatSession };
+export { ChatAgent };
 
 export interface Env {
   AI: Ai;
   VECTORIZE: VectorizeIndex;
   DB: D1Database;
-  CHAT_SESSION: DurableObjectNamespace;
+  CHAT_AGENT: DurableObjectNamespace;
   ASSETS: Fetcher;
   MODEL_PRIMARY: string;
   MODEL_GUARD: string;
   EMBED_MODEL: string;
   ADMIN_KEY?: string;
   CS_TOKEN?: string;
+  PRESENTER_KEY?: string;
+  LANGFUSE_BASE_URL?: string;
+  LANGFUSE_PUBLIC_KEY?: string;
+  LANGFUSE_SECRET_KEY?: string;
+  KENARI_API_KEY?: string;
 }
 
 const app = new Hono<{ Bindings: Env }>();
@@ -35,8 +40,8 @@ app.use("/api/audit/*", requireCsToken);
 app.use("/api/chat/:sessionId/history", requireCsToken);
 
 function getDO(env: Env, sessionId: string) {
-  const id = env.CHAT_SESSION.idFromName(sessionId);
-  return env.CHAT_SESSION.get(id);
+  const id = env.CHAT_AGENT.idFromName(sessionId);
+  return env.CHAT_AGENT.get(id);
 }
 
 function forwardToDO(stub: DurableObjectStub, originalRequest: Request, pathname: string, extraParams: Record<string, string>) {

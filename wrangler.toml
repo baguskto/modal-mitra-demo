@@ -1,4 +1,7 @@
-name = "modal-mitra-demo"
+# v2 — Cloudflare Agents SDK (AIChatAgent) + LangGraph.js + Langfuse. Worker BARU, demo v1
+# (`modal-mitra-demo`, lihat tag git `v1-pre-agents-sdk`) TIDAK disentuh/dideploy ulang -> tetap
+# live sebagai fallback aman menjelang interview (lihat README §Keputusan Desain).
+name = "modal-mitra-demo-v2"
 main = "src/index.ts"
 compatibility_date = "2025-10-20"
 compatibility_flags = ["nodejs_compat"]
@@ -21,15 +24,16 @@ index_name = "modal-mitra-kb"
 binding = "AI"
 
 [[durable_objects.bindings]]
-name = "CHAT_SESSION"
-class_name = "ChatSession"
+name = "CHAT_AGENT"
+class_name = "ChatAgent"
 
 [[migrations]]
 tag = "v1"
-new_sqlite_classes = ["ChatSession"]
+new_sqlite_classes = ["ChatAgent"]
 
 [vars]
 ENV_NAME = "demo"
 MODEL_PRIMARY = "@cf/qwen/qwen3-30b-a3b-fp8"
 MODEL_GUARD = "@cf/meta/llama-guard-3-8b"
 EMBED_MODEL = "@cf/baai/bge-m3"
+LANGFUSE_BASE_URL = "https://jp.cloud.langfuse.com"
