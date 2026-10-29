@@ -3,6 +3,7 @@ import { ChatAgent } from "./do/ChatAgent";
 import { signPresenterToken, verifyPresenterToken, readCookie, presenterCookieHeader, clearPresenterCookieHeader } from "./security/presenter";
 import { checkIpRateLimit } from "./security/rateLimit";
 import { extrasApp, type ExtrasAppEnv } from "./extras/router";
+import { PRESENTER_QA } from "./data/presenterQa";
 
 export { ChatAgent };
 export { SlaEscalationWorkflow } from "./extras/workflows/slaEscalationWorkflow";
@@ -68,6 +69,19 @@ function requireFullCs(c: any) {
   return null;
 }
 
+// FIX P0 (temuan QA #4): Konsol CS publik SEBELUMNYA menampilkan "Semua sesi" (SEMUA percakapan
+// pengunjung lain) + queue (termasuk sesi eval/test) ke SIAPA PUN yang punya token demo publik
+// (PUBLIC_DEMO_CS_TOKEN, sengaja tidak rahasia). Sekarang: pengunjung publik (!csFull) HANYA boleh
+// melihat sesinya SENDIRI (dibuktikan lewat query `?mine=<sessionId>` yang dikirim client dari
+// sessionStorage, sama seperti sessionId chat-nya sendiri — lihat ui/src/App.tsx), ditegakkan DI
+// SERVER (bukan hanya disembunyikan di UI). Mode Presenter/CS_TOKEN asli tetap bisa lihat semua.
+function ownSessionFilter(c: any, sessionIdColumn = "session_id"): { sql: string; param: string } | null {
+  if (c.get("csFull")) return null; // tidak ada filter -> boleh lihat semua
+  const mine = String(c.req.query("mine") ?? "");
+  if (!mine) return { sql: `${sessionIdColumn} = ?`, param: "__no_session_provided__" };
+  return { sql: `${sessionIdColumn} = ?`, param: mine };
+}
+
 /** x-admin-key ATAU cookie Presenter — dipakai panel kill-switch & demo-tamper (keduanya sudah
  * presenter-only di UI). /api/admin/ingest TIDAK memakai ini — tetap wajib ADMIN_KEY asli karena
  * dipanggil dari script (scripts/run-ingest.ts), bukan browser. */
@@ -96,6 +110,14 @@ app.post("/api/presenter/logout", async (c) => {
 
 app.get("/api/presenter/status", async (c) => {
   return c.json({ presenter: await isPresenter(c) });
+});
+
+// Q&A interview /learn (visibility-rules.md: ❌ publik, ✅ presenter) — SENGAJA hidup di server
+// (src/data/presenterQa.ts), tidak pernah di client bundle. Temuan QA: sebelumnya 13 pasang Q&A
+// ikut ter-bundle ke JS publik (hanya disembunyikan di UI, tetap terbaca via view-source).
+app.get("/api/presenter/qa", async (c) => {
+  if (!(await isPresenter(c))) return c.json({ error: "unauthorized" }, 401);
+  return c.json(PRESENTER_QA);
 });
 
 // Rate limit kasar per-IP untuk pengunjung publik (bukan presenter) pada jalur yang memanggil
@@ -132,6 +154,17 @@ app.get("/api/chat/:sessionId/ws", async (c) => {
   return forwardToDO(stub, c.req.raw, "/ws", { sessionId, role: "customer" });
 });
 
+// FIX (temuan QA MAJOR c): useAgentChat (client) fetch GET .../ws/get-messages saat mount/refresh
+// untuk memulihkan histori pesan — rute ini sebelumnya TIDAK terdaftar di Worker, jadi jatuh ke
+// app.notFound() -> SPA fallback -> balas index.html (200 OK) -> client gagal parse JSON
+// ("Failed to parse initial messages JSON") -> chat kelihatan kosong setelah refresh. Diteruskan
+// ke DO (AIChatAgent bawaan sudah menangani path yang diakhiri "/get-messages", sama seperti "/ws").
+app.get("/api/chat/:sessionId/ws/get-messages", async (c) => {
+  const sessionId = c.req.param("sessionId");
+  const stub = getDO(c.env, sessionId);
+  return forwardToDO(stub, c.req.raw, "/get-messages", { sessionId });
+});
+
 app.get("/api/cs/:sessionId/ws", async (c) => {
   // Kanal observer+takeover CS. requireCsToken (di atas, terpasang di /api/cs/*) sudah menerima
   // token demo publik untuk BACA; di sini kirim peran "cs-demo" bila bukan csFull supaya DO bisa
@@ -145,16 +178,21 @@ app.get("/api/cs/:sessionId/ws", async (c) => {
 
 app.post("/api/chat/:sessionId/message", async (c) => {
   const sessionId = c.req.param("sessionId");
-  const body = await c.req.json<{ text: string; persona?: string }>();
+  const body = await c.req.json<{ text: string; persona?: string; isEvalRun?: boolean }>();
   if (!body?.text || typeof body.text !== "string" || body.text.length > 2000) {
     return c.json({ error: "text wajib diisi, maksimal 2000 karakter" }, 400);
   }
   const persona = body.persona === "pendana" || body.persona === "petugas" ? body.persona : "mitra";
 
   const stub = getDO(c.env, sessionId);
+  // `isEvalRun` (dikirim scripts/run-eval.ts, run-langfuse-eval.ts, run-extras-eval.ts,
+  // measure-latency.ts -- lihat header x-eval-run di bawah) -> ditandai `source='eval'` di
+  // sessions_index (ChatAgent.syncSessionsIndex) supaya TIDAK PERNAH muncul di antrean CS live
+  // (lihat /api/cs/queue, /api/cs/sessions) -- temuan QA #4: 42 sesi eval mencemari antrean live.
+  const isEvalRun = !!body.isEvalRun || c.req.header("x-eval-run") === "1";
   const res = await stub.fetch(`https://do/message?sessionId=${encodeURIComponent(sessionId)}`, {
     method: "POST",
-    body: JSON.stringify({ text: body.text, persona }),
+    body: JSON.stringify({ text: body.text, persona, isEvalRun }),
     headers: { "content-type": "application/json" },
   });
   const data = await res.json<any>();
@@ -202,36 +240,77 @@ app.post("/api/cs/:sessionId/reply", async (c) => {
 
 // Antrean CS: sesi mode HUMAN diurutkan dari yang menunggu paling lama (handoff_at), dengan SLA
 // respons (lihat ChatSession RESPONSE_SLA_MINUTES) agar konsol bisa menyorot yang sudah lewat tenggat.
+// `source != 'eval'` (lihat migrasi kolom `source` di schema.sql): sesi dari scripts/run-eval.ts dkk
+// TIDAK PERNAH ikut muncul di antrean live, publik maupun Presenter (temuan QA: 42 sesi eval dengan
+// "SLA lewat 464m" ikut nongol di antrean live).
 app.get("/api/cs/queue", async (c) => {
+  const own = ownSessionFilter(c);
   const rows = await c.env.DB.prepare(
     `SELECT session_id, persona, mode, verified_actor_id, last_message, last_sender, handoff_at, sla_due_at, handoff_summary, updated_at
-     FROM sessions_index WHERE mode = 'HUMAN' ORDER BY handoff_at ASC`,
-  ).all();
+     FROM sessions_index WHERE mode = 'HUMAN' AND (source IS NULL OR source != 'eval') ${own ? `AND ${own.sql}` : ""} ORDER BY handoff_at ASC`,
+  )
+    .bind(...(own ? [own.param] : []))
+    .all();
   return c.json(rows.results);
 });
 
+// "Semua sesi" — PRESENTER/CS_TOKEN ASLI SAJA (server-enforced, bukan hanya disembunyikan di UI).
+// Publik hanya melihat sesinya sendiri (1 baris, lewat ?mine=, atau kosong kalau tidak dikirim).
 app.get("/api/cs/sessions", async (c) => {
-  const rows = await c.env.DB.prepare(`SELECT * FROM sessions_index ORDER BY updated_at DESC LIMIT 50`).all();
+  const own = ownSessionFilter(c);
+  const rows = await c.env.DB.prepare(
+    `SELECT * FROM sessions_index WHERE (source IS NULL OR source != 'eval') ${own ? `AND ${own.sql}` : ""} ORDER BY updated_at DESC LIMIT 50`,
+  )
+    .bind(...(own ? [own.param] : []))
+    .all();
   return c.json(rows.results);
 });
 
 // HITL four-eyes (integritas data §Security): restrukturisasi/keringanan dicatat AI sebagai
 // 'pending_cs_approval' (src/tools/execute.ts) — HARUS disetujui/ditolak CS di sini sebelum
 // berstatus 'submitted' dan diteruskan ke petugas lapangan/tim kredit.
+// `approved_once` ditambahkan di antara pending_cs_approval -> submitted (lihat fix four-eyes di
+// bawah) -- tetap tampil di daftar "menunggu" sampai approver KEDUA yang BERBEDA menyetujui.
 app.get("/api/cs/hitl/pending", async (c) => {
   const rows = await c.env.DB.prepare(
-    `SELECT restru_id, mitra_id, pinjaman_no, reason, created_at FROM restructuring_requests WHERE status = 'pending_cs_approval' ORDER BY created_at ASC`,
+    `SELECT restru_id, mitra_id, pinjaman_no, reason, status, first_approver, created_at FROM restructuring_requests WHERE status IN ('pending_cs_approval', 'approved_once') ORDER BY created_at ASC`,
   ).all();
   return c.json(rows.results);
 });
 
+// FIX (temuan QA MAJOR d — "four-eyes palsu"): SEBELUMNYA satu klik "Setujui" langsung membuat
+// status 'submitted' (hanya 1 approver), dan approve KEDUA oleh ORANG YANG SAMA tetap balas 200
+// (bukan ditolak) -- jadi "four-eyes" cuma nama, bukan kontrol sungguhan. Sekarang: approve
+// PERTAMA -> 'approved_once' (mencatat `first_approver`); approve KEDUA WAJIB nama approver BEDA
+// (case-insensitive, trim) baru jadi 'submitted'; approver yang SAMA mencoba approve lagi -> 409
+// dengan pesan jelas (bukan diam-diam sukses).
 app.post("/api/cs/hitl/:restruId/approve", async (c) => {
   const denied = requireFullCs(c);
   if (denied) return denied;
   const restruId = c.req.param("restruId");
-  await c.env.DB.prepare(`UPDATE restructuring_requests SET status = 'submitted' WHERE restru_id = ? AND status = 'pending_cs_approval'`).bind(restruId).run();
-  await c.env.DB.prepare(`INSERT INTO record_versions (record_type, record_id, status, changed_by, note) VALUES ('restructuring_request', ?, 'submitted', 'cs', 'four-eyes approve')`).bind(restruId).run();
-  return c.json({ ok: true, status: "submitted" });
+  const body = await c.req.json<{ approver?: string }>().catch(() => ({}) as { approver?: string });
+  const approver = (body.approver ?? "").trim();
+  if (!approver) return c.json({ error: "Nama approver wajib diisi (four-eyes butuh identitas approver)." }, 400);
+
+  const row = await c.env.DB.prepare(`SELECT status, first_approver FROM restructuring_requests WHERE restru_id = ?`).bind(restruId).first<{ status: string; first_approver: string | null }>();
+  if (!row) return c.json({ error: "Permintaan tidak ditemukan." }, 404);
+
+  if (row.status === "pending_cs_approval") {
+    await c.env.DB.prepare(`UPDATE restructuring_requests SET status = 'approved_once', first_approver = ? WHERE restru_id = ? AND status = 'pending_cs_approval'`).bind(approver, restruId).run();
+    await c.env.DB.prepare(`INSERT INTO record_versions (record_type, record_id, status, changed_by, note) VALUES ('restructuring_request', ?, 'approved_once', 'cs', ?)`).bind(restruId, `approver 1: ${approver}`).run();
+    return c.json({ ok: true, status: "approved_once", note: "Approve pertama tercatat. Menunggu approver KEDUA yang berbeda untuk finalisasi (four-eyes)." });
+  }
+
+  if (row.status === "approved_once") {
+    if (row.first_approver && row.first_approver.trim().toLowerCase() === approver.toLowerCase()) {
+      return c.json({ error: `Approver kedua harus BERBEDA dari approver pertama (${row.first_approver}) — four-eyes butuh 2 orang berbeda.` }, 409);
+    }
+    await c.env.DB.prepare(`UPDATE restructuring_requests SET status = 'submitted' WHERE restru_id = ? AND status = 'approved_once'`).bind(restruId).run();
+    await c.env.DB.prepare(`INSERT INTO record_versions (record_type, record_id, status, changed_by, note) VALUES ('restructuring_request', ?, 'submitted', 'cs', ?)`).bind(restruId, `approver 2: ${approver} (approver 1: ${row.first_approver})`).run();
+    return c.json({ ok: true, status: "submitted" });
+  }
+
+  return c.json({ error: `Permintaan ini sudah berstatus '${row.status}', tidak bisa di-approve lagi.` }, 409);
 });
 
 app.post("/api/cs/hitl/:restruId/reject", async (c) => {
@@ -239,13 +318,26 @@ app.post("/api/cs/hitl/:restruId/reject", async (c) => {
   if (denied) return denied;
   const restruId = c.req.param("restruId");
   const body = await c.req.json<{ note?: string }>().catch(() => ({}) as { note?: string });
-  await c.env.DB.prepare(`UPDATE restructuring_requests SET status = 'rejected' WHERE restru_id = ? AND status = 'pending_cs_approval'`).bind(restruId).run();
+  await c.env.DB.prepare(`UPDATE restructuring_requests SET status = 'rejected' WHERE restru_id = ? AND status IN ('pending_cs_approval', 'approved_once')`).bind(restruId).run();
   await c.env.DB.prepare(`INSERT INTO record_versions (record_type, record_id, status, changed_by, note) VALUES ('restructuring_request', ?, 'rejected', 'cs', ?)`).bind(restruId, body.note ?? null).run();
   return c.json({ ok: true, status: "rejected" });
 });
 
+// FIX (temuan QA #g): audit log/verify sebelumnya bisa diakses untuk SESI SIAPA PUN memakai token
+// demo publik (hanya butuh tahu session_id, tanpa ada pengecekan "ini sesi Anda sendiri?") — jadi
+// publik bisa membaca trace PII-redacted milik pengunjung lain. Sekarang: bukan Presenter/CS_TOKEN
+// asli -> wajib ?mine=<sessionId milik sendiri> yang SAMA dengan :sessionId di path.
+function requireOwnSessionOrFull(c: any, sessionId: string): Response | null {
+  if (c.get("csFull")) return null;
+  const mine = String(c.req.query("mine") ?? "");
+  if (!mine || mine !== sessionId) return c.json({ error: "Audit log sesi lain khusus mode Presenter." }, 403);
+  return null;
+}
+
 app.get("/api/audit/:sessionId/verify", async (c) => {
   const sessionId = c.req.param("sessionId");
+  const denied = requireOwnSessionOrFull(c, sessionId);
+  if (denied) return denied;
   const stub = getDO(c.env, sessionId);
   const res = await stub.fetch(`https://do/audit-verify?sessionId=${encodeURIComponent(sessionId)}`);
   return c.json(await res.json());
@@ -253,6 +345,8 @@ app.get("/api/audit/:sessionId/verify", async (c) => {
 
 app.get("/api/audit/:sessionId/log", async (c) => {
   const sessionId = c.req.param("sessionId");
+  const denied = requireOwnSessionOrFull(c, sessionId);
+  if (denied) return denied;
   const rows = await c.env.DB.prepare(`SELECT seq, actor, event_type, payload, hash, created_at FROM audit_log WHERE session_id = ? ORDER BY seq ASC`).bind(sessionId).all();
   return c.json(rows.results);
 });

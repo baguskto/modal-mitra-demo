@@ -22,7 +22,7 @@ function slaBadge(slaDueAt: string | null) {
   );
 }
 
-export default function CsConsole({ presenter }: { presenter: boolean }) {
+export default function CsConsole({ presenter, mySessionId }: { presenter: boolean; mySessionId?: string }) {
   const [queue, setQueue] = useState<any[]>([]);
   const [killSwitches, setKillSwitches] = useState<any[]>([]);
   const [allSessions, setAllSessions] = useState<any[]>([]);
@@ -40,8 +40,8 @@ export default function CsConsole({ presenter }: { presenter: boolean }) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   async function refreshLists() {
-    setQueue(await listQueue());
-    setAllSessions(await listSessions());
+    setQueue(await listQueue(mySessionId));
+    setAllSessions(await listSessions(mySessionId));
     setHitlPending(await listHitlPending());
   }
 
@@ -56,8 +56,16 @@ export default function CsConsole({ presenter }: { presenter: boolean }) {
   }, [presenter]);
 
   async function decideHitl(restruId: string, approve: boolean) {
-    if (approve) await approveHitl(restruId);
-    else await rejectHitl(restruId, window.prompt("Alasan tolak (opsional):") ?? undefined);
+    if (approve) {
+      // Fix "four-eyes palsu" (temuan QA MAJOR d): wajib identitas approver supaya server bisa
+      // menolak approver kedua = approver pertama (409, lihat src/index.ts).
+      const approver = window.prompt("Nama Anda sebagai approver (four-eyes butuh 2 approver BERBEDA):");
+      if (!approver) return;
+      const res = await approveHitl(restruId, approver);
+      if (res?.error) window.alert(res.error);
+    } else {
+      await rejectHitl(restruId, window.prompt("Alasan tolak (opsional):") ?? undefined);
+    }
     refreshLists();
   }
 
@@ -70,7 +78,7 @@ export default function CsConsole({ presenter }: { presenter: boolean }) {
     setActiveId(id);
     setHistory([]);
     setAuditResult(null);
-    getAuditLog(id).then(setAuditLog);
+    getAuditLog(id, mySessionId).then(setAuditLog);
     wsRef.current?.close();
     const ws = connectCsSocket(id);
     wsRef.current = ws;
@@ -149,6 +157,9 @@ export default function CsConsole({ presenter }: { presenter: boolean }) {
           <div key={h.restru_id} className="session-item" style={{ borderLeft: "3px solid #e0a800" }}>
             <div><b>{h.restru_id}</b> · {h.mitra_id} ({h.pinjaman_no})</div>
             <div className="sub">{h.reason?.slice(0, 80)}</div>
+            {h.status === "approved_once" && (
+              <div className="sub" style={{ color: "#8a5a00" }}>✅ Disetujui oleh {h.first_approver} — menunggu approver KE-2 yang berbeda.</div>
+            )}
             {presenter ? (
               <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
                 <button onClick={() => decideHitl(h.restru_id, true)}>Setujui</button>
@@ -167,7 +178,8 @@ export default function CsConsole({ presenter }: { presenter: boolean }) {
             <div className="sub">{s.persona} · {s.handoff_summary || s.last_message}</div>
           </div>
         ))}
-        <div className="queue-heading">Semua sesi</div>
+        <div className="queue-heading">{presenter ? "Semua sesi" : "Sesi saya"}</div>
+        {!presenter && allSessions.length === 0 && <div className="empty-hint">Sesi Anda belum tercatat (kirim pesan dulu di Live Chat).</div>}
         {allSessions.map((s) => (
           <div key={s.session_id} className={`session-item ${activeId === s.session_id ? "active" : ""}`} onClick={() => openSession(s.session_id)}>
             <div><b>{s.session_id}</b> <span className={`badge ${s.mode}`}>{s.mode}</span></div>
@@ -207,7 +219,7 @@ export default function CsConsole({ presenter }: { presenter: boolean }) {
                   🔄 Reset sesi demo
                 </button>
               )}
-              <button onClick={() => verifyAudit(activeId).then(setAuditResult)}>🔍 Verifikasi integritas log (hash-chain+HMAC)</button>
+              <button onClick={() => verifyAudit(activeId, mySessionId).then(setAuditResult)}>🔍 Verifikasi integritas log (hash-chain+HMAC)</button>
               {presenter && (
                 <button style={{ color: "#ff6b6b" }} onClick={() => tamperDemo(activeId).then(() => window.alert("1 baris di-tamper. Klik 'Verifikasi integritas log' untuk lihat terdeteksi."))}>
                   ⚠️ Demo tamper 1 baris (Presenter)

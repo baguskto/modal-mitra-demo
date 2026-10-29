@@ -19,6 +19,12 @@ const PATTERNS: { type: string; re: RegExp }[] = [
   // verifikasi kedua tidak boleh terkirim mentah ke LLM/model guard/audit log sama seperti
   // nomor pinjaman/ID pendana. Token tetap di-resolve balik lewat vault sebelum eksekusi tool.
   { type: "TANGGAL", re: /\b\d{4}-\d{2}-\d{2}\b/g },
+  // FIX (temuan QA #g): format ISO di atas TIDAK menangkap tanggal lahir yang ditulis informal
+  // ("tgl lahir 12/03/1985", "12 maret 1985") -- sebelumnya bocor mentah ke audit log
+  // `query_redacted` (terbaca publik via Konsol CS -> "Trace audit log", token demo). Dua pola
+  // tambahan: DD/MM/YYYY atau DD-MM-YYYY, dan "DD <nama bulan> YYYY" (Bahasa Indonesia).
+  { type: "TANGGAL", re: /\b\d{1,2}[\/-]\d{1,2}[\/-]\d{4}\b/g },
+  { type: "TANGGAL", re: /\b\d{1,2}\s+(januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember)\s+\d{4}\b/gi },
 ];
 
 // Scan OUTPUT (jawaban ke pengguna) HANYA untuk PII yang berbahaya ditampilkan ke SIAPAPUN, tanpa

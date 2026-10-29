@@ -100,13 +100,18 @@ export class ChatAgent extends AIChatAgent<ChatAgentEnv, SessionMeta> {
     return { baseUrl: LANGFUSE_BASE_URL, publicKey: LANGFUSE_PUBLIC_KEY, secretKey: LANGFUSE_SECRET_KEY };
   }
 
-  private async syncSessionsIndex(lastMessage: string, lastSender: string) {
+  // `source` ('live' default | 'eval') -- lihat src/index.ts POST /api/chat/:sessionId/message
+  // (header x-eval-run / body.isEvalRun, dipakai scripts/run-eval.ts dkk). Sesi 'eval' difilter
+  // keluar dari /api/cs/queue & /api/cs/sessions supaya tidak mencemari antrean CS live (temuan
+  // QA #4). `undefined` -> JANGAN ubah `source` yang sudah tercatat (ON CONFLICT pakai nilai lama).
+  private async syncSessionsIndex(lastMessage: string, lastSender: string, source?: "live" | "eval") {
     await this.env.DB.prepare(
-      `INSERT INTO sessions_index (session_id, persona, mode, verified_actor_id, last_message, last_sender, handoff_at, sla_due_at, handoff_summary, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      `INSERT INTO sessions_index (session_id, persona, mode, verified_actor_id, last_message, last_sender, handoff_at, sla_due_at, handoff_summary, source, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
        ON CONFLICT(session_id) DO UPDATE SET persona=excluded.persona, mode=excluded.mode, verified_actor_id=excluded.verified_actor_id,
          last_message=excluded.last_message, last_sender=excluded.last_sender, handoff_at=excluded.handoff_at,
-         sla_due_at=excluded.sla_due_at, handoff_summary=excluded.handoff_summary, updated_at=datetime('now')`,
+         sla_due_at=excluded.sla_due_at, handoff_summary=excluded.handoff_summary,
+         source=COALESCE(?, sessions_index.source), updated_at=datetime('now')`,
     )
       .bind(
         this.name,
@@ -118,8 +123,40 @@ export class ChatAgent extends AIChatAgent<ChatAgentEnv, SessionMeta> {
         this.state.handoffAt,
         this.state.handoffAt ? new Date(new Date(this.state.handoffAt).getTime() + RESPONSE_SLA_MINUTES * 60_000).toISOString() : null,
         this.state.handoffSummary,
+        source ?? "live",
+        source ?? null,
       )
       .run();
+  }
+
+  /** Broadcast event live ke koneksi Konsol CS (role "cs"/"cs-demo", tag "staff") -- FIX (temuan
+   * QA #h): sebelumnya hanya balasan CS manual (cs_message/cs-reply) yang di-broadcast; giliran
+   * user<->AI normal TIDAK terkirim ke observer CS sampai konsol di-refresh manual, jadi konsol
+   * terasa "tidak live" terutama setelah "Kembalikan ke AI". */
+  private broadcastToStaff(payload: Record<string, unknown>) {
+    const json = JSON.stringify(payload);
+    for (const conn of this.getConnections("staff")) {
+      try {
+        conn.send(json);
+      } catch {
+        // observer mungkin baru saja disconnect
+      }
+    }
+  }
+
+  /** Histori ringkas untuk dikirim sebagai konteks percakapan ke agen (lihat graph.ts `state.history`)
+   * -- FIX BLOCKER (temuan QA #2, "agen tanpa memori"): sebelumnya HANYA pesan user TERAKHIR yang
+   * dikirim ke runAgentGraph, jadi agen lupa konteks giliran sebelumnya ("tadi sy nanya apa aja"
+   * -> "belum menanyakan") dan bisa membuat aksi tulis DUPLIKAT saat user hanya menjawab "iya"
+   * terhadap tawaran AI sebelumnya. `excludeLast`: pesan user yang SEDANG diproses (sudah diambil
+   * terpisah sebagai `userText`), supaya tidak dobel di history. */
+  private recentHistory(excludeLast: UIMessage | undefined, limit = 10): { role: "user" | "assistant"; text: string }[] {
+    const all = [...this.messages];
+    const prior = excludeLast ? all.slice(0, all.lastIndexOf(excludeLast)) : all;
+    return prior
+      .slice(-limit)
+      .map((m) => ({ role: (roleOf(m) === "user" ? "user" : "assistant") as "user" | "assistant", text: textOf(m) }))
+      .filter((h) => h.text);
   }
 
   private async summarizeForHandoff(): Promise<string> {
@@ -237,6 +274,8 @@ export class ChatAgent extends AIChatAgent<ChatAgentEnv, SessionMeta> {
     const sessionId = this.name;
     const lastUser = [...this.messages].reverse().find((m) => m.role === "user");
     const userText = lastUser ? textOf(lastUser) : "";
+    const history = this.recentHistory(lastUser);
+    this.broadcastToStaff({ type: "message", role: "user", text: userText, ts: new Date().toISOString() });
 
     const bodyPersona = options?.body?.persona as Persona | undefined;
     const userTurnCount = this.messages.filter((m) => m.role === "user").length;
@@ -263,7 +302,7 @@ export class ChatAgent extends AIChatAgent<ChatAgentEnv, SessionMeta> {
 
     const result = await runAgentGraph(
       this.env,
-      { sessionId, persona, userText, verifiedActorId: this.state.verifiedActorId, failedUnderstandingCount: this.state.failedUnderstandingCount, styleInstruction },
+      { sessionId, persona, userText, history, verifiedActorId: this.state.verifiedActorId, failedUnderstandingCount: this.state.failedUnderstandingCount, styleInstruction },
       trace,
     );
 
@@ -295,6 +334,7 @@ export class ChatAgent extends AIChatAgent<ChatAgentEnv, SessionMeta> {
       handoffAt,
     });
     await this.syncSessionsIndex(result.answerText, "ai");
+    this.broadcastToStaff({ type: "message", role: "ai", text: result.answerText, citations: result.citations, ts: new Date().toISOString() });
     if (result.handoff.triggered) {
       this.broadcast(JSON.stringify({ type: "mode_change", mode: "HUMAN", reason: result.handoff.reason, severity: result.handoff.severity, summary: handoffSummary }));
     }
@@ -344,10 +384,14 @@ export class ChatAgent extends AIChatAgent<ChatAgentEnv, SessionMeta> {
     const sessionId = this.name;
 
     if (url.pathname.endsWith("/message") && request.method === "POST") {
-      const body = await request.json<{ text: string; persona?: Persona }>();
+      const body = await request.json<{ text: string; persona?: Persona; isEvalRun?: boolean }>();
       const bodyPersona = body.persona === "pendana" || body.persona === "petugas" ? body.persona : undefined;
       const userTurnCount = this.messages.filter((m) => m.role === "user").length;
       const persona: Persona = userTurnCount === 0 && bodyPersona ? bodyPersona : this.state.persona;
+      // `isEvalRun` (lihat src/index.ts) -> tag sessions_index.source='eval' supaya tidak mencemari
+      // antrean CS live (temuan QA #4).
+      const source: "live" | "eval" = body.isEvalRun ? "eval" : "live";
+      const history = this.recentHistory(undefined);
 
       if (this.state.mode === "HUMAN") {
         return jsonResponse({ reply: "Percakapan ini sedang ditangani CS kami. Mohon tunggu balasan dari CS.", mode: this.state.mode, verifiedActorId: this.state.verifiedActorId, persona });
@@ -357,7 +401,7 @@ export class ChatAgent extends AIChatAgent<ChatAgentEnv, SessionMeta> {
       const xray = this.makeXrayRecorder();
       const trace = startTrace(this.langfuseConfig(), "chat_turn", { persona, userTextLen: body.text.length }, { sessionId, persona, channel: "http_eval" }, undefined, pseudoSession, xray.onXray);
 
-      const result = await runAgentGraph(this.env, { sessionId, persona, userText: body.text, verifiedActorId: this.state.verifiedActorId, failedUnderstandingCount: this.state.failedUnderstandingCount }, trace);
+      const result = await runAgentGraph(this.env, { sessionId, persona, userText: body.text, history, verifiedActorId: this.state.verifiedActorId, failedUnderstandingCount: this.state.failedUnderstandingCount }, trace);
 
       let handoffSummary = this.state.handoffSummary;
       let handoffAt = this.state.handoffAt;
@@ -384,7 +428,7 @@ export class ChatAgent extends AIChatAgent<ChatAgentEnv, SessionMeta> {
           metadata: { citations: result.citations, intent: result.intent, blockedByGuard: result.blockedByGuard ?? null, xray: xray.events, traceId: trace.traceId },
         } as UIMessage,
       ]);
-      await this.syncSessionsIndex(result.answerText, "ai");
+      await this.syncSessionsIndex(result.answerText, "ai", source);
       if (result.handoff.triggered) {
         this.broadcast(JSON.stringify({ type: "mode_change", mode: "HUMAN", reason: result.handoff.reason, severity: result.handoff.severity, summary: handoffSummary }));
       }

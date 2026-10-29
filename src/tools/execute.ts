@@ -189,6 +189,30 @@ export async function executeTool(
       // kredit/petugas lapangan — tiket pengaduan/DSR TIDAK butuh gate ini (append-only,
       // sudah ditinjau manusia di alur SOP masing-masing, risiko lebih rendah).
       if (ctx.actorType !== "mitra" || !ctx.verifiedActorId) return { ok: false, error: "Identitas mitra belum terverifikasi." };
+
+      // FIX BLOCKER (temuan QA #2, "agen tanpa memori" -> restrukturisasi duplikat): sebelum
+      // membuat baris BARU, cek apakah mitra ini SUDAH punya permintaan AKTIF (belum
+      // selesai/rejected) -- kalau ada, kembalikan status yang SUDAH ADA (idempotent), JANGAN
+      // buat entri kedua. Ini jaring pengaman independen dari gating "konfirmasi eksplisit" di
+      // graph.ts nodeRouteIntent (lapisan kedua, bukan satu-satunya kontrol).
+      const existing = await db
+        .prepare(
+          `SELECT restru_id, status FROM restructuring_requests WHERE mitra_id = ? AND status IN ('pending_cs_approval', 'approved_once', 'submitted', 'under_review') ORDER BY created_at DESC LIMIT 1`,
+        )
+        .bind(ctx.verifiedActorId)
+        .first<{ restru_id: string; status: string }>();
+      if (existing) {
+        return {
+          ok: true,
+          data: {
+            restru_id: existing.restru_id,
+            status: existing.status,
+            alreadyExisted: true,
+            note: `Anda sudah punya permintaan restrukturisasi aktif (${existing.restru_id}, status: ${existing.status}) -- tidak membuat permintaan baru, tunggu proses yang sudah berjalan.`,
+          },
+        };
+      }
+
       const restruId = `RST-${Date.now().toString(36).toUpperCase()}`;
       const loanRow = await db.prepare(`SELECT pinjaman_no FROM pinjaman WHERE mitra_id = ? ORDER BY tanggal_mulai DESC LIMIT 1`).bind(ctx.verifiedActorId).first<{ pinjaman_no: string }>();
       await db
@@ -201,7 +225,7 @@ export async function executeTool(
         .run();
       return {
         ok: true,
-        data: { restru_id: restruId, status: "pending_cs_approval", note: "Permintaan restrukturisasi dicatat, MENUNGGU persetujuan CS (four-eyes) sebelum diteruskan ke petugas lapangan/tim kredit. TIDAK ada keputusan otomatis." },
+        data: { restru_id: restruId, status: "pending_cs_approval", alreadyExisted: false, note: "Permintaan restrukturisasi dicatat, MENUNGGU persetujuan CS (four-eyes, 2 approver berbeda) sebelum diteruskan ke petugas lapangan/tim kredit. TIDAK ada keputusan otomatis." },
       };
     }
 

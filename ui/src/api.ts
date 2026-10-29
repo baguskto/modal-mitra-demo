@@ -19,12 +19,15 @@ async function csGetList(url: string): Promise<any[]> {
   return res.json();
 }
 
-export async function listSessions() {
-  return csGetList(`/api/cs/sessions`);
+// `mine` = sessionId chat milik browser ini sendiri (sessionStorage, lihat App.tsx) -- server
+// memakainya untuk membatasi pengunjung publik (!csFull) HANYA melihat sesinya sendiri, bukan
+// "Semua sesi"/antrean milik pengunjung lain (temuan QA #4, ditegakkan di server, src/index.ts).
+export async function listSessions(mine?: string) {
+  return csGetList(`/api/cs/sessions${mine ? `?mine=${encodeURIComponent(mine)}` : ""}`);
 }
 
-export async function listQueue() {
-  return csGetList(`/api/cs/queue`);
+export async function listQueue(mine?: string) {
+  return csGetList(`/api/cs/queue${mine ? `?mine=${encodeURIComponent(mine)}` : ""}`);
 }
 
 export async function getKpi() {
@@ -32,13 +35,13 @@ export async function getKpi() {
   return res.json();
 }
 
-export async function verifyAudit(sessionId: string) {
-  const res = await fetch(`/api/audit/${encodeURIComponent(sessionId)}/verify`, { headers: csHeaders() });
+export async function verifyAudit(sessionId: string, mine?: string) {
+  const res = await fetch(`/api/audit/${encodeURIComponent(sessionId)}/verify${mine ? `?mine=${encodeURIComponent(mine)}` : ""}`, { headers: csHeaders() });
   return res.json();
 }
 
-export async function getAuditLog(sessionId: string) {
-  const res = await fetch(`/api/audit/${encodeURIComponent(sessionId)}/log`, { headers: csHeaders() });
+export async function getAuditLog(sessionId: string, mine?: string) {
+  const res = await fetch(`/api/audit/${encodeURIComponent(sessionId)}/log${mine ? `?mine=${encodeURIComponent(mine)}` : ""}`, { headers: csHeaders() });
   return res.json();
 }
 
@@ -46,8 +49,14 @@ export async function getAuditLog(sessionId: string) {
 export async function listHitlPending() {
   return csGetList(`/api/cs/hitl/pending`);
 }
-export async function approveHitl(restruId: string) {
-  const res = await fetch(`/api/cs/hitl/${encodeURIComponent(restruId)}/approve`, { method: "POST", headers: csHeaders() });
+// `approver`: nama/identitas approver -- server menolak (409) kalau approver kedua = approver
+// pertama (fix "four-eyes palsu", lihat src/index.ts).
+export async function approveHitl(restruId: string, approver: string) {
+  const res = await fetch(`/api/cs/hitl/${encodeURIComponent(restruId)}/approve`, {
+    method: "POST",
+    headers: { ...csHeaders(), "content-type": "application/json" },
+    body: JSON.stringify({ approver }),
+  });
   return res.json();
 }
 export async function rejectHitl(restruId: string, note?: string) {

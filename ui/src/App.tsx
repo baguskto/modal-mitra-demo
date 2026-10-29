@@ -81,7 +81,7 @@ export default function App() {
             onDemoConsumed={() => setPendingDemo(null)}
           />
         )}
-        {tab === "cs" && <CsConsole presenter={presenter} />}
+        {tab === "cs" && <CsConsole presenter={presenter} mySessionId={sessionId} />}
         {tab === "dash" && <Dashboard />}
         {tab === "learn" && <LearnPage presenter={presenter} onDemoLink={handleDemoLink} />}
       </div>

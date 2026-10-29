@@ -22,22 +22,49 @@ function fakeNik(seed: number): string {
   // 16 digit, provinsi/kabupaten "00" dan tanggal "00" -> jelas sintetis & tidak valid.
   return `00${pad(0, 2)}${pad(0, 2)}${pad((seed % 28) + 1, 2)}${pad((seed % 12) + 1, 2)}99${pad(seed, 4)}`;
 }
-function futureDate(daysFromNow: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() + daysFromNow);
+
+// FIX (temuan QA MAJOR f): SEBELUMNYA `pertemuan_berikutnya` dihitung dari "hari ini + offset
+// tetap" TANPA peduli `hari_pertemuan` (nama hari) yang sudah fixed per majelis -> bisa mismatch
+// ("Senin, 1 Nov 2026" yang sebenarnya hari Minggu). Dan due date angsuran di-anchor ke tahun 2025
+// hardcoded -> makin lama script ini tidak dijalankan ulang, makin semua due date "sudah lewat".
+// Sekarang semuanya RELATIF ke tanggal run (`TODAY`): `nextWeekday` menjamin nama hari & tanggal
+// selalu konsisten, dan tanggal_mulai pinjaman dihitung mundur dari TODAY supaya campuran lunas
+// (lampau) / due minggu ini (termasuk skenario "telat bayar") / due bulan depan selalu ada.
+// PENTING: semua arithmetic pakai UTC (getUTC*/setUTC*/Date.UTC), BUKAN local time (getDate/
+// setDate biasa) -- ditemukan saat verifikasi: kalkulasi "hari ini" di local time lalu
+// di-serialize via toISOString() (yang selalu UTC) bisa SELISIH 1 hari kalau timezone lokal mesin
+// build != UTC (mis. WIB = UTC+7), persis akar masalah "Senin, 1 Nov 2026" yang ternyata Minggu.
+// Anchor TODAY ke tengah malam UTC dari tanggal kalender saat ini -> getUTCDay()/setUTCDate() dan
+// hasil akhir toISOString() SELALU konsisten satu sama lain, tidak peduli timezone mesin yang menjalankan.
+const TODAY = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate()));
+function daysFromToday(n: number): string {
+  const d = new Date(TODAY);
+  d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
 }
+// weekdayNum: 0=Minggu .. 6=Sabtu (JS Date.getUTCDay()). Selalu STRICT di masa depan (>=1 hari).
+function nextWeekday(weekdayNum: number): string {
+  const d = new Date(TODAY);
+  let diff = (weekdayNum - d.getUTCDay() + 7) % 7;
+  if (diff === 0) diff = 7;
+  d.setUTCDate(d.getUTCDate() + diff);
+  return d.toISOString().slice(0, 10);
+}
+const HARI_TO_WEEKDAY: Record<string, number> = { Minggu: 0, Senin: 1, Selasa: 2, Rabu: 3, Kamis: 4, Jumat: 5, Sabtu: 6 };
 
 // --- Majelis (kelompok ibu-ibu, 15-20 orang per majelis, gaya Grameen group-lending) ---
-const majelis = WILAYAH.map((wilayah, i) => ({
-  majelis_id: `MJL-${pad(i + 1, 3)}`,
-  nama: `Majelis ${["Melati", "Mawar", "Anggrek", "Kenanga", "Dahlia"][i]} ${pad(i + 1, 2)}`,
-  wilayah,
-  hari_pertemuan: HARI[i],
-  jam_pertemuan: "09:00",
-  pertemuan_berikutnya: futureDate(((i + 1) * 2) % 7 + 1),
-  petugas_lapangan: `${pick(MALE_FIRST, i + 11)} ${pick(LAST, i + 3)}`,
-}));
+const majelis = WILAYAH.map((wilayah, i) => {
+  const hari_pertemuan = HARI[i];
+  return {
+    majelis_id: `MJL-${pad(i + 1, 3)}`,
+    nama: `Majelis ${["Melati", "Mawar", "Anggrek", "Kenanga", "Dahlia"][i]} ${pad(i + 1, 2)}`,
+    wilayah,
+    hari_pertemuan,
+    jam_pertemuan: "09:00",
+    pertemuan_berikutnya: nextWeekday(HARI_TO_WEEKDAY[hari_pertemuan]),
+    petugas_lapangan: `${pick(MALE_FIRST, i + 11)} ${pick(LAST, i + 3)}`,
+  };
+});
 
 // --- Mitra (peminjam) — 2 identitas TETAP untuk skenario demo/eval + 28 acak ---
 const mitra: any[] = [];
@@ -65,12 +92,17 @@ for (const d of demoMitra) {
     phone: d.phone, birth_date: d.birth_date, majelis_id: d.majelis_id, usaha: d.usaha,
   });
   const weekly = Math.round((d.pokok * 1.12) / d.tenor_minggu);
+  // due(paidPeriods) jatuh ~5 hari lalu RELATIF ke TODAY (bukan tahun 2025 hardcoded) -> periode
+  // sebelumnya (p < paidPeriods) otomatis lunas di masa lampau, periode setelahnya (p > paidPeriods)
+  // otomatis jatuh tempo ke depan (minggu ini s/d sebulan ke depan untuk tenor panjang).
+  const anchorDaysAgo = 5;
+  const tanggalMulai = daysFromToday(-anchorDaysAgo - (d.paidPeriods - 1) * 7);
   pinjaman.push({
     pinjaman_no: d.pinjaman_no, mitra_id: d.mitra_id, produk: d.produk, pokok_pinjaman: d.pokok,
-    tenor_minggu: d.tenor_minggu, angsuran_per_minggu: weekly, status: "aktif", tanggal_mulai: "2025-11-03",
+    tenor_minggu: d.tenor_minggu, angsuran_per_minggu: weekly, status: "aktif", tanggal_mulai: tanggalMulai,
   });
   for (let p = 1; p <= d.tenor_minggu; p++) {
-    const due = new Date(2025, 10, 3 + (p - 1) * 7).toISOString().slice(0, 10);
+    const due = daysFromToday(-anchorDaysAgo + (p - d.paidPeriods) * 7);
     let status = "belum_bayar";
     if (p <= d.paidPeriods) status = d.lateOne && p === d.paidPeriods ? "terlambat" : "lunas";
     angsuran.push({ pinjaman_no: d.pinjaman_no, periode_no: p, tanggal_jatuh_tempo: due, jumlah: weekly, status, tanggal_bayar: status === "lunas" ? due : null });
@@ -93,13 +125,22 @@ for (let i = 3; i <= 30; i++) {
   const tenor_minggu = [25, 50][seed % 2];
   const weekly = Math.round((pokok * 1.12) / tenor_minggu);
   const paidPeriods = seed % tenor_minggu;
+  // due(paidPeriods) relatif TODAY (3-12 hari lalu, tergantung seed) -> status "terlambat" HANYA
+  // kalau due date hasil hitungnya SUNGGUH di masa lampau (offset < 0), bukan ditandai acak via
+  // "seed % 6" seperti sebelumnya (yang bisa menghasilkan "terlambat" untuk due date yang
+  // sebenarnya di masa depan -> ditemukan QA: "semua jatuh tempo sudah lewat" pada data lama yang
+  // di-anchor ke tahun 2025 hardcoded). Variasi anchorDaysAgo (3-12) secara alami menghasilkan
+  // campuran: sebagian mitra punya 1 periode telat tipis, sebagian tidak -- tanpa hardcode tahun.
+  const anchorDaysAgo = 3 + (seed % 10);
+  const tanggalMulai = daysFromToday(-anchorDaysAgo - (paidPeriods - 1) * 7);
   pinjaman.push({
     pinjaman_no, mitra_id, produk, pokok_pinjaman: pokok, tenor_minggu, angsuran_per_minggu: weekly,
-    status: paidPeriods >= tenor_minggu - 1 ? "lunas" : "aktif", tanggal_mulai: "2025-08-04",
+    status: paidPeriods >= tenor_minggu - 1 ? "lunas" : "aktif", tanggal_mulai: tanggalMulai,
   });
   for (let p = 1; p <= tenor_minggu; p++) {
-    const due = new Date(2025, 7, 4 + (p - 1) * 7).toISOString().slice(0, 10);
-    const status = p <= paidPeriods ? "lunas" : (p === paidPeriods + 1 && seed % 6 === 0 ? "terlambat" : "belum_bayar");
+    const offsetDays = -anchorDaysAgo + (p - paidPeriods) * 7;
+    const due = daysFromToday(offsetDays);
+    const status = p <= paidPeriods ? "lunas" : offsetDays < 0 ? "terlambat" : "belum_bayar";
     angsuran.push({ pinjaman_no, periode_no: p, tanggal_jatuh_tempo: due, jumlah: weekly, status, tanggal_bayar: status === "lunas" ? due : null });
   }
 }
@@ -139,7 +180,7 @@ for (const p of pendana) {
       pendana_id: p.pendana_id,
       majelis_id: m.majelis_id,
       jumlah_didanai: jumlah,
-      tanggal_pendanaan: "2025-09-01",
+      tanggal_pendanaan: daysFromToday(-(30 + (seed % 90))),
       status: pick(statusOpts, seed),
       tenor_minggu: 50,
       estimasi_imbal_hasil_pct: [12, 13.5, 15][seed % 3],

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DemoLink } from "./types";
 import { LEVELS } from "./levels";
+import { getPresenterQa, type PresenterQaEntry } from "./qa";
 import { FlowDiagram, CastleDiagram, MapDiagram } from "./Diagrams";
 import "./learn.css";
 
@@ -20,10 +21,12 @@ function Diagram({ level }: { level: (typeof LEVELS)[number] }) {
 function LevelCard({
   level,
   presenter,
+  qa,
   onDemoLink,
 }: {
   level: (typeof LEVELS)[number];
   presenter: boolean;
+  qa?: PresenterQaEntry;
   onDemoLink: (demo: DemoLink) => void;
 }) {
   return (
@@ -49,18 +52,18 @@ function LevelCard({
           <span className="learn-wow-source">{level.wowSource}</span>
         </div>
       </div>
-      {presenter && (
+      {presenter && qa && (
         <div className="learn-qa">
           <div className="learn-qa-lock">🔒 Khusus Presenter — pertanyaan interview</div>
-          <p className="learn-qa-q">Q: {level.interviewQ}</p>
-          <p className="learn-qa-a">A: {level.interviewA}</p>
+          <p className="learn-qa-q">Q: {qa.interviewQ}</p>
+          <p className="learn-qa-a">A: {qa.interviewA}</p>
         </div>
       )}
     </article>
   );
 }
 
-function ClosingMap({ presenter }: { presenter: boolean }) {
+function ClosingMap({ presenter, qa }: { presenter: boolean; qa?: PresenterQaEntry }) {
   return (
     <article className="learn-card" id="learn-level-penutup">
       <div className="learn-card-head">
@@ -82,15 +85,10 @@ function ClosingMap({ presenter }: { presenter: boolean }) {
           ))}
         </ul>
       </div>
-      {presenter && (
+      {presenter && qa && (
         <div className="learn-qa">
           <div className="learn-qa-lock">🔒 Khusus Presenter</div>
-          <p className="learn-qa-a">
-            Ringkasan 30 detik: demo ini LangGraph.js StateGraph di atas Cloudflare Agents SDK — guard_in (PII+injeksi) →
-            verify_identity → route_intent (+ HITL four-eyes) → tools (RAG+ReAct, least-privilege) → guard_out
-            (sitasi+privasi antar-majelis) → respond. Semua diukur: 42/45 eval, 0/11 red-team, trace per node di Langfuse.
-            Bagian yang masih diusulkan (voice note, semantic cache, WhatsApp scale) ditandai jujur, bukan diklaim selesai.
-          </p>
+          <p className="learn-qa-a">{qa.interviewA}</p>
         </div>
       )}
     </article>
@@ -100,7 +98,18 @@ function ClosingMap({ presenter }: { presenter: boolean }) {
 export default function LearnPage({ presenter, onDemoLink }: LearnPageProps) {
   const [presentMode, setPresentMode] = useState(false);
   const [index, setIndex] = useState(0);
+  const [qaById, setQaById] = useState<Record<string, PresenterQaEntry>>({});
   const touchStartX = useRef<number | null>(null);
+
+  // Presenter-only Q&A (lihat ui/src/learn/qa.ts) -- diambil dari server HANYA saat presenter
+  // aktif, tidak pernah ikut bundle JS publik.
+  useEffect(() => {
+    if (!presenter) {
+      setQaById({});
+      return;
+    }
+    getPresenterQa().then((list) => setQaById(Object.fromEntries(list.map((q) => [q.id, q]))));
+  }, [presenter]);
 
   const next = useCallback(() => setIndex((i) => Math.min(SCREEN_COUNT - 1, i + 1)), []);
   const prev = useCallback(() => setIndex((i) => Math.max(0, i - 1)), []);
@@ -118,10 +127,10 @@ export default function LearnPage({ presenter, onDemoLink }: LearnPageProps) {
 
   const screens = useMemo(
     () => [
-      ...LEVELS.map((l) => <LevelCard key={l.id} level={l} presenter={presenter} onDemoLink={onDemoLink} />),
-      <ClosingMap key="penutup" presenter={presenter} />,
+      ...LEVELS.map((l) => <LevelCard key={l.id} level={l} presenter={presenter} qa={qaById[l.id]} onDemoLink={onDemoLink} />),
+      <ClosingMap key="penutup" presenter={presenter} qa={qaById["penutup"]} />,
     ],
-    [presenter, onDemoLink],
+    [presenter, qaById, onDemoLink],
   );
 
   if (presentMode) {

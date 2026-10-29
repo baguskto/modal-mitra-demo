@@ -28,8 +28,9 @@ export interface LevelData {
     | { kind: "castle" }
     | { kind: "map" };
   demo: DemoLink | null;
-  interviewQ: string;
-  interviewA: string;
+  // interviewQ/interviewA SENGAJA tidak ada di sini — presenter-only, diambil runtime dari
+  // GET /api/presenter/qa (lihat src/data/presenterQa.ts, ui/src/learn/qa.ts), supaya tidak ikut
+  // ter-bundle ke JS publik (temuan QA: 13 pasang Q&A sebelumnya bisa dibaca via view-source).
   wow: string;
   wowSource: string;
 }

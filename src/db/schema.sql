@@ -101,7 +101,12 @@ CREATE TABLE IF NOT EXISTS restructuring_requests (
   mitra_id TEXT,
   pinjaman_no TEXT,
   reason TEXT,
-  status TEXT NOT NULL DEFAULT 'submitted', -- pending_cs_approval | submitted | under_review | approved | rejected (lihat four-eyes §Security)
+  -- pending_cs_approval -> approved_once (1 approver) -> submitted (2 approver BERBEDA) | rejected.
+  -- `approved_once` + `first_approver` ditambahkan setelah temuan QA "four-eyes palsu": SEBELUMNYA
+  -- 1 approve = langsung submitted, approve kedua oleh ORANG YANG SAMA tetap diterima server
+  -- (lihat src/index.ts /api/cs/hitl/:id/approve, 409 kalau approver 2 = approver 1).
+  status TEXT NOT NULL DEFAULT 'submitted', -- pending_cs_approval | approved_once | submitted | under_review | approved | rejected
+  first_approver TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -156,6 +161,11 @@ CREATE TABLE IF NOT EXISTS sessions_index (
   handoff_at TEXT,
   sla_due_at TEXT,
   handoff_summary TEXT,
+  -- 'live' (default) | 'eval' -- sesi dari scripts/run-eval.ts dkk ditandai 'eval' (lihat
+  -- src/index.ts POST /api/chat/:sessionId/message, header x-eval-run / body.isEvalRun) supaya
+  -- TIDAK PERNAH muncul di antrean/daftar sesi CS live (temuan QA #4: 42 sesi eval mencemari
+  -- antrean live dengan "SLA lewat 464m").
+  source TEXT NOT NULL DEFAULT 'live',
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

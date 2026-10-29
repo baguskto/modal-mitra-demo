@@ -166,7 +166,7 @@ Latensi (`npm run latency`, 6 skenario × 3 repetisi) — lihat `evals/latency-r
 
 | STRIDE | Ancaman konkret di demo ini | Kontrol |
 |---|---|---|
-| **S**poofing | Klaim identitas palsu ("saya petugas Amartha", "saya anggota majelis yang sama") | `actor_id` operasi SELALU dari sesi terverifikasi (dua faktor: nomor pinjaman/ID pendana + tanggal lahir), tidak pernah dari klaim LLM/pengguna |
+| **S**poofing | Klaim identitas palsu ("saya petugas Modal Mitra Contoh", "saya anggota majelis yang sama") | `actor_id` operasi SELALU dari sesi terverifikasi (dua faktor: nomor pinjaman/ID pendana + tanggal lahir), tidak pernah dari klaim LLM/pengguna |
 | **T**ampering | Ubah/hapus data (angsuran, audit log) | Tidak ada satu pun tool yang bisa UPDATE/DELETE tabel ledger inti (lihat §7.4); audit log append-only + HMAC |
 | **R**epudiation | CS/AI menyangkal tindakan | Audit hash-chain+HMAC per sesi, `record_versions` untuk riwayat status restrukturisasi |
 | **I**nfo disclosure | Bocor data mitra/pendana lain, PII mentah ke LLM/log | PII vault (redaksi sebelum LLM melihat apa pun), `checkMemberPrivacyLeak` groundedness, scan PII di output |
@@ -190,7 +190,7 @@ Latensi (`npm run latency`, 6 skenario × 3 repetisi) — lihat `evals/latency-r
 
 ### 7.3 Red Team Arena
 
-Toggle **🔴 Red Team** di header Live Chat (`ui/src/ChatPanel.tsx`) — daftar 6 serangan siap klik (injeksi langsung, ekstraksi system prompt, minta data majelis lain, social engineering "petugas Amartha", janji finansial terlarang, tool abuse "ubah/hapus data") yang langsung mengirim pesan DAN membuka panel X-Ray supaya lapisan pertahanan yang menangkapnya terlihat real-time. **Diuji langsung** (browser headless): serangan "minta data majelis lain" ditolak benar oleh `checkMemberPrivacyLeak` di node `guard_out`, X-Ray menunjukkan seluruh pipeline (bukan diblokir di `guard_in` — serangan ini bukan pola injeksi heuristik, lolos ke LLM yang kemudian menjawab dengan benar menolak + sitasi kebijakan, lalu guard_out memvalidasi tidak ada ID bocor).
+Toggle **🔴 Red Team** di header Live Chat (`ui/src/ChatPanel.tsx`) — daftar 6 serangan siap klik (injeksi langsung, ekstraksi system prompt, minta data majelis lain, social engineering "petugas Modal Mitra Contoh", janji finansial terlarang, tool abuse "ubah/hapus data") yang langsung mengirim pesan DAN membuka panel X-Ray supaya lapisan pertahanan yang menangkapnya terlihat real-time. **Diuji langsung** (browser headless): serangan "minta data majelis lain" ditolak benar oleh `checkMemberPrivacyLeak` di node `guard_out`, X-Ray menunjukkan seluruh pipeline (bukan diblokir di `guard_in` — serangan ini bukan pola injeksi heuristik, lolos ke LLM yang kemudian menjawab dengan benar menolak + sitasi kebijakan, lalu guard_out memvalidasi tidak ada ID bocor).
 
 `evals/promptfooconfig.yaml` kasus `adv_*` (10 kasus) + serangan "tool abuse ubah/hapus data" (lihat §7.4 — **secara desain tidak ada tool yang bisa melakukannya**, jadi serangan ini SELALU gagal oleh least-privilege, bukan oleh guard runtime) berfungsi sebagai suite red-team. **Attack Success Rate (ASR) yang diukur**: 0/10 (adv_01–adv_10) + 0/1 (tool abuse, secara struktural mustahil) = **0% ASR** pada run eval terakhir (§5.4) — satu-satunya kegagalan terkait kategori `adv_*` di run Kenari (`adv_03`) adalah **pola jawaban yang tidak cocok regex eval** (agen tetap menolak permintaan dengan benar, hanya tidak memakai frasa "tidak dapat/bisa" persis), BUKAN kebocoran data — dicatat jujur di §0.1/§5.4, bukan dihitung sebagai ASR>0 karena tidak ada data yang bocor.
 
@@ -272,9 +272,9 @@ Scope permintaan ("PERLUASAN"/"PERLUASAN 2"/"PERLUASAN 3") jauh melampaui waktu 
 
 ---
 
-## 12. Pemetaan ke kebutuhan Amartha (arsitektur produksi — USULAN, bukan klaim)
+## 12. Pemetaan ke kebutuhan lembaga keuangan mikro (arsitektur produksi — USULAN, bukan klaim)
 
-*(Tidak berubah dari v1 — tabel lengkap riset publik 29 Okt 2026, OJK/POJK 40-2024, model group-lending, Amartha Care — ada di tag `v1-pre-agents-sdk`. Ditambah di v2: Langfuse/tracing yang disebut sebagai "usulan observability produksi" di v1 §8 SEKARANG benar-benar diimplementasikan di demo ini, bukan lagi hanya usulan di tabel.)*
+*(Tidak berubah dari v1 — tabel lengkap riset publik 29 Okt 2026, OJK/POJK 40-2024, model group-lending, layanan CS acuan — ada di tag `v1-pre-agents-sdk`. Ditambah di v2: Langfuse/tracing yang disebut sebagai "usulan observability produksi" di v1 §8 SEKARANG benar-benar diimplementasikan di demo ini, bukan lagi hanya usulan di tabel.)*
 
 ---
 

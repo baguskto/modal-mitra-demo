@@ -46,6 +46,11 @@ const AgentState = z.object({
   sessionId: z.string(),
   persona: z.enum(["mitra", "pendana", "petugas"]),
   userText: z.string(),
+  // FIX BLOCKER (temuan QA #2, "agen tanpa memori percakapan"): histori beberapa giliran
+  // terakhir (lihat ChatAgent.recentHistory), supaya agen bisa menjawab pertanyaan yang
+  // bergantung konteks ("tadi sy nanya apa aja", "iya bu" sebagai konfirmasi tawaran
+  // sebelumnya) tanpa harus mengulang semuanya di 1 pesan.
+  history: z.array(z.object({ role: z.enum(["user", "assistant"]), text: z.string() })).default([]),
   verifiedActorId: z.string().nullable(),
   failedUnderstandingCount: z.number().default(0),
   // feat/extras fitur #2 (deteksi bahasa) — dihitung sekali di ChatAgent.onChatMessage sebelum
@@ -124,6 +129,28 @@ function safeParseAgentJson(text: string): { type: string; text?: string; citati
   } catch {
     return null;
   }
+}
+
+// FIX (temuan QA MAJOR b, "JSON mentah bocor di bubble"): kalau safeParseAgentJson gagal (karena
+// escaping rusak/trailing noise dll, ~2/25 balasan di uji ulang Red Team "Tool abuse" + balasan
+// setelah release CS), SEBELUMNYA kode langsung memakai `llmRes.text` MENTAH sebagai jawaban --
+// kalau teks itu sendiri adalah fragmen JSON yang gagal parse persis, pengguna melihat
+// '...","citations":[...]}' mentah di bubble. Sekarang: coba ekstrak field "text" dengan regex
+// dulu (lebih permisif dari JSON.parse ketat); kalau TETAP terlihat seperti JSON protokol internal
+// (ada kurung kurawal + field "type"/"citations"/"tool"), JANGAN PERNAH tampilkan mentah --
+// fallback ke pesan aman standar.
+function extractAnswerFallback(raw: string): string {
+  if (!raw) return FALLBACK_NOT_FOUND;
+  const m = raw.match(/"text"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  if (m) {
+    try {
+      return JSON.parse(`"${m[1]}"`) || FALLBACK_NOT_FOUND;
+    } catch {
+      return m[1] || FALLBACK_NOT_FOUND;
+    }
+  }
+  if (/^\s*\{[\s\S]*"(type|citations|tool)"\s*:/.test(raw)) return FALLBACK_NOT_FOUND;
+  return raw;
 }
 
 // --- NODE: guard_in — injeksi (heuristik + Llama Guard) -> redaksi PII -> scope ---
@@ -281,13 +308,32 @@ async function nodeRouteIntent(state: State, config: any): Promise<Partial<State
     }
   }
 
+  // FIX BLOCKER (temuan QA #2): SEBELUMNYA setiap pesan ber-intent "keterlambatan" dari mitra
+  // terverifikasi otomatis membuat restrukturisasi BARU -- termasuk saat user hanya menjawab "iya
+  // bu" terhadap tawaran AI (reason tercatat literal "iya bu", bukan konteks), DAN saat user
+  // bertanya ulang ("jd keringanan sy gmn kelanjutannya?") ikut membuat entri DUPLIKAT. Sekarang:
+  // (1) hanya dibuat kalau user secara EKSPLISIT minta/sebut restrukturisasi/keringanan, ATAU
+  // balasan singkat ("iya"/"ya"/"oke"/"boleh"/"setuju"/"lanjut") yang MERESPONS tawaran AI
+  // sebelumnya (dicek dari history, bukan ditebak); (2) idempotency ditegakkan lagi di
+  // executeTool (src/tools/execute.ts) -- kalau sudah ada permintaan aktif, dikembalikan
+  // statusnya yang SUDAH ADA, tidak membuat baris baru.
   let autoRestru: any = null;
   if (intent === "keterlambatan" && state.persona === "mitra" && state.verifiedActorId) {
-    const result = await executeTool(env.DB, "create_restructuring_request", { reason: state.userText.slice(0, 500) }, { verifiedActorId: state.verifiedActorId, actorType: "mitra", sessionId: state.sessionId });
-    if (result.ok) {
-      autoRestru = result.data;
-      extraToolCalls.push({ tool: "create_restructuring_request", ok: true });
-      await appendAuditLog(env.DB, state.sessionId, "system", "tool_call", { tool: "create_restructuring_request", ok: true, auto: true });
+    const lastAssistantText = [...state.history].reverse().find((h) => h.role === "assistant")?.text ?? "";
+    const offeredKeringanan = /keringanan|restrukturisasi|perpanjang(an)?/i.test(lastAssistantText);
+    const explicitRestruRequest = /restrukturisasi|keringanan|perpanjang|ajukan/i.test(state.userText);
+    const briefConfirm = /^\s*(iya|ya|yap|oke|ok|boleh|setuju|lanjut(kan)?)\b/i.test(state.userText.trim());
+    const shouldCreateRestru = explicitRestruRequest || (briefConfirm && offeredKeringanan);
+    if (shouldCreateRestru) {
+      const reason = explicitRestruRequest
+        ? state.userText.slice(0, 500)
+        : `Konfirmasi atas tawaran sebelumnya ("${lastAssistantText.slice(0, 150)}") — balasan mitra: "${state.userText.slice(0, 150)}"`;
+      const result = await executeTool(env.DB, "create_restructuring_request", { reason }, { verifiedActorId: state.verifiedActorId, actorType: "mitra", sessionId: state.sessionId });
+      if (result.ok) {
+        autoRestru = result.data;
+        extraToolCalls.push({ tool: "create_restructuring_request", ok: true });
+        await appendAuditLog(env.DB, state.sessionId, "system", "tool_call", { tool: "create_restructuring_request", ok: true, auto: true, idempotent: result.data?.alreadyExisted ?? false });
+      }
     }
   }
 
@@ -313,8 +359,12 @@ async function nodeTools(state: State, config: any): Promise<Partial<State>> {
   if (state.autoDsr) ragContext += `\n---\n${wrapAsData("dsr_otomatis", JSON.stringify(state.autoDsr))}\nSistem sudah mencatat permintaan hak data ini sebagai ${state.autoDsr.dsr_id}. Jelaskan bahwa permintaan TIDAK dieksekusi otomatis dan akan ditinjau tim berwenang, sebutkan nomor ${state.autoDsr.dsr_id}.`;
   if (state.autoRestru) ragContext += `\n---\n${wrapAsData("restrukturisasi_otomatis", JSON.stringify(state.autoRestru))}\nSistem sudah mencatat permintaan restrukturisasi/keringanan ini sebagai ${state.autoRestru.restru_id}. Jelaskan bahwa ini akan ditinjau petugas lapangan/tim kredit, TIDAK ADA keputusan/jaminan otomatis, sebutkan nomor ${state.autoRestru.restru_id}.`;
 
+  // FIX BLOCKER (temuan QA #2): histori giliran sebelumnya disisipkan sebagai pesan user/assistant
+  // biasa SEBELUM giliran saat ini -- supaya LLM benar-benar "ingat" apa yang sudah dibahas (tidak
+  // perlu diulang-ulang token redaksi/RAG untuk giliran lama, cukup teks percakapan apa adanya).
   const messages: ChatMessage[] = [
     { role: "system", content: buildSystemPrompt(state.persona as Persona, verifiedActorId, state.styleInstruction) },
+    ...state.history.slice(-10).map((h): ChatMessage => ({ role: h.role, content: h.text })),
     { role: "user", content: buildUserTurn(state.redacted, wrapAsData("konteks_rag", ragContext)) },
   ];
 
@@ -331,7 +381,7 @@ async function nodeTools(state: State, config: any): Promise<Partial<State>> {
 
     const parsed = safeParseAgentJson(llmRes.text);
     if (!parsed) {
-      finalText = llmRes.text || FALLBACK_NOT_FOUND;
+      finalText = extractAnswerFallback(llmRes.text);
       break;
     }
     if (parsed.type === "final_answer") {
@@ -370,6 +420,12 @@ async function nodeTools(state: State, config: any): Promise<Partial<State>> {
       if ((toolName === "verify_mitra" || toolName === "verify_pendana") && result.ok && result.data?.verified) {
         verifiedActorId = result.data.actor_id;
         allowedIds.add(String(verifiedActorId).toUpperCase());
+        // FIX (temuan QA MAJOR a, "X-Ray node 2· Verify selalu 'skip' walau verifikasi sukses"):
+        // node verify_identity SUDAH SELESAI (fase sebelum tools) saat verifikasi ini baru terjadi
+        // di SINI (lewat tool_call LLM, bukan auto-verify pola-ketat). Tanpa event tambahan, panel
+        // X-Ray tetap menampilkan node 2 sebagai "skip" walau verifikasi SUKSES di giliran yang
+        // sama -- emit event susulan untuk node yang sama supaya panel menunjukkan status nyata.
+        trace?.span("verify_identity", { viaToolCall: true }).end({ verified: true, via: "tool_call" });
       }
       if (toolName === "handoff_to_human" && result.ok) {
         await appendAuditLog(env.DB, state.sessionId, "system", "handoff", { reason: result.data?.reason ?? "tool_call_llm", severity: "normal", ticket_id: state.autoTicket?.ticket_id ?? null });
@@ -400,12 +456,17 @@ async function nodeTools(state: State, config: any): Promise<Partial<State>> {
       continue;
     }
 
-    finalText = llmRes.text;
+    finalText = extractAnswerFallback(llmRes.text);
     break;
   }
 
   if (!finalText) finalText = FALLBACK_NOT_FOUND;
-  span?.end({ steps: toolCallsMade.length, model: modelUsed });
+  // FIX (temuan QA MAJOR a, "panel Tools 0 langkah padahal tool jalan"): `toolCallsMade` lokal
+  // hanya menghitung tool yang dipanggil DI DALAM loop node ini -- tool yang sudah jalan di node
+  // sebelumnya (mis. verify_mitra via auto-verify di verify_identity, atau create_complaint_ticket
+  // di route_intent) tidak ikut terhitung walau SUDAH jalan di giliran ini, jadi panel X-Ray bisa
+  // menampilkan "0 langkah" walau tool sungguhan jalan. Hitung KUMULATIF dari seluruh giliran.
+  span?.end({ steps: state.toolCallsMade.length + toolCallsMade.length, model: modelUsed });
   return {
     finalText,
     citations,
@@ -424,6 +485,10 @@ async function nodeGuardOut(state: State, config: any): Promise<Partial<State>> 
   const span = trace?.span("guard_out", {});
   const vault = new Map(state.vaultEntries);
   let finalText = resolveLeakedTokensInText(state.finalText, vault);
+  // Jaring pengaman terakhir (temuan QA MAJOR b): titik konvergensi SEMUA jalur non-instant (tools
+  // -> guard_out) -- kalau finalText MASIH terlihat seperti JSON protokol internal mentah
+  // (apa pun sebabnya), jangan pernah lanjut ke pengguna seperti itu.
+  if (/^\s*\{[\s\S]*"(type|citations|tool)"\s*:/.test(finalText)) finalText = FALLBACK_NOT_FOUND;
   let citations = state.citations;
   let blockedByGuard: string | undefined;
 
@@ -506,6 +571,8 @@ export interface AgentTurnInput {
   sessionId: string;
   persona: Persona;
   userText: string;
+  /** Histori beberapa giliran terakhir (lihat ChatAgent.recentHistory) -- fix BLOCKER memori. */
+  history?: { role: "user" | "assistant"; text: string }[];
   verifiedActorId: string | null;
   failedUnderstandingCount: number;
   styleInstruction?: string;
@@ -546,6 +613,7 @@ export async function runAgentGraph(env: AgentEnvBindings, input: AgentTurnInput
     sessionId: input.sessionId,
     persona: input.persona,
     userText: input.userText,
+    history: input.history ?? [],
     verifiedActorId: input.verifiedActorId,
     failedUnderstandingCount: input.failedUnderstandingCount,
     styleInstruction: input.styleInstruction,
