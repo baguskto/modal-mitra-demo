@@ -8,3 +8,4 @@ data/synthetic/kb-chunks.json
 .DS_Store
 .admin-key.local
 .cs-token.local
+.dev.vars
