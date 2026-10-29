@@ -103,10 +103,24 @@ export default function CsConsole({ presenter }: { presenter: boolean }) {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [history]);
 
+  // FIX (P0 "tombol banyak error"): klik Takeover/Kembalikan/Kirim tepat setelah membuka sesi bisa
+  // kena race — WS baru dibuat di openSession() belum readyState OPEN (masih CONNECTING) saat
+  // tombol diklik -> ws.send() lempar InvalidStateError TANPA tertangkap (uncaught exception di
+  // console). Semua pengiriman lewat socket CS sekarang lewat helper ini yang mengecek readyState.
+  function sendCs(payload: any): boolean {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+    try {
+      ws.send(JSON.stringify(payload));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   function sendCsReply() {
-    if (!reply.trim() || !wsRef.current) return;
-    wsRef.current.send(JSON.stringify({ type: "cs_message", text: reply }));
-    setReply("");
+    if (!reply.trim()) return;
+    if (sendCs({ type: "cs_message", text: reply })) setReply("");
   }
 
   return (
@@ -182,8 +196,8 @@ export default function CsConsole({ presenter }: { presenter: boolean }) {
             <div className="cs-actions">
               {presenter ? (
                 <>
-                  <button onClick={() => wsRef.current?.send(JSON.stringify({ type: "takeover" }))}>Ambil Alih (Takeover)</button>
-                  <button onClick={() => wsRef.current?.send(JSON.stringify({ type: "release" }))}>Kembalikan ke AI</button>
+                  <button onClick={() => sendCs({ type: "takeover" })}>Ambil Alih (Takeover)</button>
+                  <button onClick={() => sendCs({ type: "release" })}>Kembalikan ke AI</button>
                 </>
               ) : (
                 <button
