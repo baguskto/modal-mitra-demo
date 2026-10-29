@@ -19,6 +19,20 @@ function authHeader(): string {
   return `Basic ${Buffer.from(`${PUBLIC_KEY}:${SECRET_KEY}`).toString("base64")}`;
 }
 
+// Sama seperti scripts/run-eval.ts — 45 kasus dari 1 IP kena rate limit publik tanpa ini.
+let presenterCookie = "";
+async function loginPresenterIfConfigured(): Promise<void> {
+  const key = process.env.PRESENTER_KEY;
+  if (!key) return;
+  const res = await fetch(`${BASE_URL}/api/presenter/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ key }),
+  });
+  const setCookie = res.headers.get("set-cookie");
+  if (res.ok && setCookie) presenterCookie = setCookie.split(";")[0];
+}
+
 function evalAssertion(a: { type: string; value: string }, output: string): boolean {
   switch (a.type) {
     case "icontains":
@@ -42,6 +56,7 @@ function evalAssertion(a: { type: string; value: string }, output: string): bool
 }
 
 async function main() {
+  await loginPresenterIfConfigured();
   let page = 1;
   let allItems: any[] = [];
   for (;;) {
@@ -65,7 +80,7 @@ async function main() {
     const t0 = Date.now();
     const res = await fetch(`${BASE_URL}/api/chat/${encodeURIComponent(sessionId)}/message`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...(presenterCookie ? { cookie: presenterCookie } : {}) },
       body: JSON.stringify({ text: item.input.text, persona: item.input.persona }),
     });
     const data: any = await res.json();

@@ -9,6 +9,32 @@ import { parse } from "yaml";
 
 const BASE_URL = process.argv[2] || process.env.MMK_BASE_URL || "https://modal-mitra-demo.markas-auracheck.workers.dev";
 const RUN_SUFFIX = Date.now().toString(36);
+// 45 kasus dari 1 IP mudah kena rate limit publik (40/10menit, lindungi kuota Workers AI/Kenari
+// dari pengunjung publik — lihat src/security/rateLimit.ts). Eval adalah traffic operator, bukan
+// pengunjung publik -> login sebagai Presenter dulu (env PRESENTER_KEY) supaya lewat cookie yang
+// SUDAH dibebaskan dari rate limit (lihat publicRateLimit di src/index.ts), tanpa perlu menaikkan
+// limit publik atau membersihkan tabel rate-limit secara manual tiap kali eval dijalankan.
+let presenterCookie = "";
+
+async function loginPresenterIfConfigured(): Promise<void> {
+  const key = process.env.PRESENTER_KEY;
+  if (!key) {
+    console.log("PRESENTER_KEY tidak diset — eval berjalan sebagai publik (bisa kena rate limit kalau >40 kasus/10menit).");
+    return;
+  }
+  const res = await fetch(`${BASE_URL}/api/presenter/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ key }),
+  });
+  const setCookie = res.headers.get("set-cookie");
+  if (res.ok && setCookie) {
+    presenterCookie = setCookie.split(";")[0];
+    console.log("Login Presenter OK — eval dibebaskan dari rate limit publik.");
+  } else {
+    console.log("Login Presenter gagal — eval tetap berjalan sebagai publik.");
+  }
+}
 
 interface Assertion { type: string; value: string }
 interface TestCase { description: string; vars: { sessionId: string; persona?: string; message: string }; assert: Assertion[] }
@@ -43,7 +69,7 @@ async function callCase(t: TestCase): Promise<string> {
   const persona = t.vars.persona || "mitra";
   const res = await fetch(`${BASE_URL}/api/chat/${encodeURIComponent(sessionId)}/message`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...(presenterCookie ? { cookie: presenterCookie } : {}) },
     body: JSON.stringify({ text: t.vars.message, persona }),
   });
   const data = await res.json();
@@ -51,6 +77,7 @@ async function callCase(t: TestCase): Promise<string> {
 }
 
 async function main() {
+  await loginPresenterIfConfigured();
   const results: { description: string; pass: boolean; failures: string[]; output: string }[] = [];
   let passCount = 0;
 

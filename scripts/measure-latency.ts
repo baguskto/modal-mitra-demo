@@ -7,6 +7,21 @@ import { writeFileSync } from "node:fs";
 
 const BASE_URL = process.argv[2] || process.env.MMK_BASE_URL || "https://modal-mitra-demo.markas-auracheck.workers.dev";
 
+// Sama seperti scripts/run-eval.ts — login Presenter (env PRESENTER_KEY) dulu bila tersedia supaya
+// traffic pengukuran latensi tidak kena rate limit publik (40/10menit, lihat src/security/rateLimit.ts).
+let presenterCookie = "";
+async function loginPresenterIfConfigured(): Promise<void> {
+  const key = process.env.PRESENTER_KEY;
+  if (!key) return;
+  const res = await fetch(`${BASE_URL}/api/presenter/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ key }),
+  });
+  const setCookie = res.headers.get("set-cookie");
+  if (res.ok && setCookie) presenterCookie = setCookie.split(";")[0];
+}
+
 interface Case {
   label: string;
   persona: "mitra" | "pendana";
@@ -31,6 +46,7 @@ function percentile(sorted: number[], p: number): number {
 }
 
 async function main() {
+  await loginPresenterIfConfigured();
   const results: { label: string; firstTokenMs: number | null; totalMs: number; blockedByGuard?: string }[] = [];
 
   for (const c of CASES) {
@@ -39,7 +55,7 @@ async function main() {
       const startedAt = Date.now();
       const res = await fetch(`${BASE_URL}/api/chat/${encodeURIComponent(sessionId)}/message`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...(presenterCookie ? { cookie: presenterCookie } : {}) },
         body: JSON.stringify({ text: c.text, persona: c.persona }),
       });
       const data: any = await res.json();

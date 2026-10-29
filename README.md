@@ -18,6 +18,20 @@ Di tengah migrasi, akun Cloudflare "Markas Auracheck" **kehabisan kuota gratis W
 
 **Dampak terukur ke eval**: 45/45 (baseline Qwen3 di Workers AI) → **42/45 di bawah Kenari** (lihat §7.3). Tiga kegagalan yang tersisa adalah perbedaan gaya jawab (model bilang "belum menemukan" alih-alih "tidak menemukan") dan satu perbedaan retrieval (chunk embedding Kenari vs Workers AI untuk model nominal yang sama "bge-m3" tidak 100% identik secara vektor — temuan nyata, bukan bug) — **bukan regresi keamanan/kepatuhan apa pun**. Akan diulang ke 45/45 begitu kuota Workers AI reset atau Bagus memutuskan upgrade Paid; `MODEL_PRIMARY`/urutan fallback sudah didesain agar tinggal dibalik (lihat komentar di `src/agent/llm.ts`).
 
+### 0.2 Insiden kedua: laptop OOM 3× + bug P0 "freezing/tombol error" (ditemukan & diperbaiki sesi ini)
+
+Laptop 18GB reboot 3× karena kehabisan memori saat sesi kerja berjalan lama (banyak worker/Chromium/dev-server dibiarkan hidup bersamaan) — pelajaran yang diambil: setelah ini, maksimal satu dev server/satu instance Chromium headless, ditutup segera sesudah dipakai, commit sering supaya kerja tidak hilang kalau reboot lagi (lihat juga `playbooks/` jika Bagus menyimpan aturan ini terpusat).
+
+**Akar masalah "banyak freezing dan tombol banyak error" yang dilaporkan Bagus** (direproduksi dengan Playwright headless, bukan browser Orca, satu instance saja — klik SETIAP tombol publik+presenter di 390px & 1440px):
+1. **Konsol CS minta `window.prompt()` untuk token yang pengunjung publik tidak mungkin tahu** (`CS_TOKEN`/`ADMIN_KEY` asli, bukan token demo) — dialog blocking native muncul berulang (terasa seperti freeze) dan SETIAP panggilan API balik `401` (token langsung dihapus dari `sessionStorage`, lalu diminta ulang lagi di klik berikutnya → loop permintaan-ditolak yang terlihat seperti "semua tombol error"). Durable Object `ChatAgent.onConnect` juga **mengecek ulang** `CS_TOKEN` asli di handshake WS-nya sendiri — artinya bahkan mode Presenter (yang login via cookie, bukan token itu) gagal membuka live view Konsol CS.
+2. **Race condition WebSocket**: tombol "Ambil Alih"/"Kembalikan ke AI"/"Kirim balasan CS" bisa diklik SEBELUM socket CS yang baru dibuka selesai `CONNECTING` → `ws.send()` melempar `InvalidStateError` yang TIDAK tertangkap (uncaught exception di console) — ditemukan lewat audit mobile (390px) yang mengklik lebih cepat dari waktu round-trip koneksi.
+
+**Perbaikan** (lihat commit `fix(cs-console): ...` ×2): token demo publik yang SENGAJA tidak rahasia (`demo-mitra-cs-2026`, hanya untuk akses BACA konsol CS — aksi tulis tetap wajib mode Presenter atau `CS_TOKEN` asli, §9) menggantikan prompt; cookie Presenter diterima langsung sebagai pengganti `x-cs-token`/`x-admin-key` (tidak perlu isi key lagi di browser); DO tidak lagi mengecek ulang token di WS (percaya peran `cs`/`cs-demo` yang worker inti sudah tentukan); semua pengiriman WS Konsol CS lewat helper `sendCs()` yang mengecek `readyState === OPEN` dulu. **Diverifikasi**: audit Playwright headless (publik × presenter, 390px × 1440px, setiap tombol yang terlihat) menghasilkan **0 console error, 0 response 4xx/5xx, 0 page error, tidak ada tanda freeze (raf-delta)** di keempat kombinasi — sebelum perbaikan, run presenter-390 menghasilkan 1 uncaught `InvalidStateError`.
+
+### 0.3 feat/extras digabung (lihat §14)
+
+Worker kedua (branch `feat/extras`, worktree terpisah) mengerjakan 6 fitur tambahan paralel — digabung ke `main` di sesi ini, termasuk menyelesaikan mismatch skema X-Ray antara event inti (`XrayEvent`, 6 node LangGraph tetap) dan event extras (`ExtrasXrayEvent`, cross-cutting seperti `stt`/`cache_hit`/`sla_escalated`) lewat satu adapter (§8.1). Detail per fitur, mana yang hidup di live demo vs mana yang OFF via feature flag: §14.
+
 ---
 
 ## 1. Arsitektur v2
@@ -116,8 +130,11 @@ Satu trace Langfuse per **giliran** (1 pesan pengguna → 1 balasan), berisi:
 |---|---|---|
 | v1 (baseline, sebelum migrasi) | Workers AI (`Qwen3-30B-A3B`) | **45/45** |
 | v2 (setelah migrasi, kuota Workers AI habis) | Kenari (`gpt-6-1-terra`) | **42/45** — lihat §0.1 untuk analisis 3 kegagalan |
+| v2 gabungan (sesi ini: fix P0 freeze/tombol + merge `feat/extras` + deteksi bahasa live) | Kenari (`gpt-6-1-terra`) | **42/45, PERSIS 3 kegagalan yang sama** (`rag_05`, `rag_07`, `adv_03` — style/phrasing, bukan keamanan) — **tidak ada regresi** dari fix/merge sesi ini. Ditambah: **77/77** unit test `feat/extras` dan **22/22** `npm run eval:extras` (heuristik bahasa, model router, keputusan SLA, memori, prompt compile) |
 
-Latensi (`npm run latency`, 6 skenario × 3 repetisi) — lihat `evals/latency-results.json` untuk angka v2 aktual pasca-deploy (diukur di akhir sesi ini, provider Kenari). Dibandingkan v1 (Workers AI sehat, p50 first-token 1.981s): Kenari menambah 1 hop jaringan eksternal (bukan co-located dengan Worker seperti Workers AI binding) — perbedaan nyata terutama pada giliran dengan banyak langkah tool (verify+lookup).
+`npm run eval`/`npm run latency` memanggil endpoint publik `/api/chat/:sessionId/message` — 45+ kasus dari satu IP mudah kena **rate limit publik** (40 request/10 menit, §9/§7.4), jadi kedua script sekarang **login sebagai Presenter dulu** (`PRESENTER_KEY` env var) untuk lewat cookie yang dibebaskan dari rate limit, bukan menaikkan limit publik itu sendiri — ditemukan karena run eval pertama pasca-merge sempat menunjukkan 5 "kegagalan" palsu (`{"error":"Terlalu banyak permintaan..."}`) yang hilang begitu diulang dengan Presenter.
+
+Latensi (`npm run latency`, 6 skenario × 3 repetisi) — lihat `evals/latency-results.json` untuk angka v2 aktual pasca-deploy (diukur di akhir sesi ini, provider Kenari, p50 first-token **3.78s**, p95 **11.45s**; giliran tanpa tool `guard_blocked_scope`/`handoff_explicit` selesai <100ms). Dibandingkan v1 (Workers AI sehat, p50 first-token 1.981s): Kenari menambah 1 hop jaringan eksternal (bukan co-located dengan Worker seperti Workers AI binding) — perbedaan nyata terutama pada giliran dengan banyak langkah tool (verify+lookup, portofolio pendana).
 
 ---
 
@@ -195,7 +212,7 @@ PII vault/tokenisasi (`src/guards/pii.ts` — NIK, nomor pinjaman/pendana, HP, e
 
 ```ts
 interface XrayEvent {
-  node: "guard_in" | "verify_identity" | "route_intent" | "tools" | "guard_out" | "respond";
+  node: "guard_in" | "verify_identity" | "route_intent" | "tools" | "guard_out" | "respond" | (string & {});
   phase: "start" | "end";
   ts: string;          // ISO timestamp
   durationMs?: number; // hanya di phase:"end"
@@ -203,6 +220,8 @@ interface XrayEvent {
 }
 ```
 Didefinisikan di `src/obs/langfuse.ts`. Contoh `data` per node/phase: `guard_in` end → `{blocked, layer?, piiRedactedCount?}`; `route_intent` end → `{intent, handoff}`; `tools` end → `{steps, model}`; `respond` end → `{totalMs, firstTokenMs}`.
+
+**`node` diperluas saat menggabung `feat/extras`** (bukan lagi union 6 nama tetap): modul extras punya event sendiri dengan skema BERBEDA (`src/extras/xray.ts` `ExtrasXrayEvent`: `{type, at, sessionId?, data}`, bukan `{node, phase, ts}`) untuk sinyal cross-cutting yang bukan node LangGraph (`stt`, `tts`, `lang_detect`, `cache_hit`/`cache_miss`, `route`, `sla_timer`/`sla_escalated`, `memory_read`/`memory_write`/`memory_deleted`, `prompt_fetch`, `online_eval`). Daripada memaksa event ini masuk salah satu dari 6 node (tidak pas secara makna), `extrasXrayToMain()` di `src/obs/langfuse.ts` mengadaptasi field-nya (`type→node`, `at→ts`, `phase:"end"` tetap) supaya tetap lewat SATU jalur broadcast `xray_event` yang sudah ada. Frontend (`ChatPanel.tsx`) sudah toleran by design: hanya 6 nama di `GRAPH_NODES` yang digambar di panel pipeline, nama lain (mis. `lang_detect`) otomatis tetap tampil di "Log event" di bawahnya — diverifikasi langsung: kirim pesan informal ("gimana ya kak, gpp ga usah buru2") di live demo dan `lang_detect` muncul di log X-Ray.
 
 ### 8.2 Cara dapat & replay event
 
@@ -218,12 +237,15 @@ Panggil `trace?.span("nama_node_baru", {inputRingkas}).end({outputRingkas})` di 
 ## 9. Mode Publik vs Presenter
 
 Lihat `projects/interview-prep/visibility-rules.md` (lokal, tidak di-deploy) untuk tabel lengkap. Ringkas implementasi:
-- **Publik (default)**: chat, X-Ray (field sudah tanpa teks mentah by construction, §8.1), Red Team Arena+skor, Konsol CS mode demo, `/about` (arsitektur/security/eval). **Tanpa**: link Langfuse, panel admin (kill-switch/tamper-demo), catatan internal.
+- **Publik (default)**: chat, X-Ray (field sudah tanpa teks mentah by construction, §8.1), Red Team Arena+skor, Konsol CS **mode demo** (lihat di bawah), `/about` (arsitektur/security/eval). **Tanpa**: link Langfuse, panel admin (kill-switch/tamper-demo), catatan internal.
 - **Presenter**: cookie `mmk_presenter` **HttpOnly, Secure, SameSite=Lax, 4 jam**, nilainya token BERTANDA HMAC (`expiry.mac`), **bukan passphrase mentah** — dicuri pun hanya dapat sesi sampai expiry, bukan akses login ulang (`src/security/presenter.ts`). Login: `POST /api/presenter/login {key}`, status: `GET /api/presenter/status`.
+- **Konsol CS mode demo vs penuh** (diperbaiki sesi ini, lihat §0.2 untuk root cause lama): akses BACA (antrean/sesi/HITL pending/audit log/observe WS) memakai **token demo publik yang sengaja tidak rahasia** (`demo-mitra-cs-2026`, `src/index.ts` `PUBLIC_DEMO_CS_TOKEN`) — tidak ada prompt sama sekali. Aksi yang MENGUBAH data (takeover, balas sebagai CS, Setujui/Tolak HITL, kill-switch, demo-tamper) **ditolak server (403/401)** kecuali mode Presenter (cookie, otomatis terkirim same-origin) atau pemegang `CS_TOKEN`/`ADMIN_KEY` asli — ditegakkan di `requireFullCs()`/`requireAdminOrPresenter()` (`src/index.ts`), BUKAN hanya disembunyikan di UI. Publik hanya melihat tombol **"🔄 Reset sesi demo"** sebagai pengganti; WS observer publik terhubung dengan peran `cs-demo` (baca-saja, lihat `ChatAgent.roleOfRequest`) alih-alih `cs` (penuh).
 - **Rate limit publik**: 40 request/10 menit per-IP pada `/api/chat/*` (bukan Presenter), D1-based (`src/security/rateLimit.ts`), fail-open bila D1 error.
-- **Tidak ada secret di bundle frontend** — `PRESENTER_KEY`/`ADMIN_KEY`/`CS_TOKEN` hanya dicek server-side; UI Presenter/admin meminta key via `prompt()` sekali, disimpan `sessionStorage` (bukan di kode/bundle).
+- **Tidak ada secret di bundle frontend** — `PRESENTER_KEY`/`ADMIN_KEY`/`CS_TOKEN` hanya dicek server-side; token demo CS publik SENGAJA bukan secret (lihat poin di atas) sehingga aman ikut ke bundle.
 - `robots.txt` (`Disallow: /`) + `<meta name="robots" content="noindex, nofollow">`.
 - Banner kecil "⚠️ Demo dengan data 100% sintetis" tampil di SEMUA tab, selalu.
+
+**Keterbatasan yang jujur dicatat (bukan disembunyikan)**: token demo publik CS membuka koneksi WS observer (`role=cs-demo`), tapi pengecekan "boleh takeover/balas" hanya hidup di Worker (`requireFullCs`) dan di `ChatAgent.onMessage` (role literal `cs` vs `cs-demo`, lihat `src/do/ChatAgent.ts`) — ini CUKUP untuk UI normal (tombol mutasi memang disembunyikan untuk publik), tapi seseorang yang mengirim frame WS mentah lewat devtools secara teoritis masih bisa mencoba `{type:"takeover"}` pada koneksi `cs-demo`-nya sendiri **kalau** ia juga tahu cara membuka WS dengan role itu secara manual — diverifikasi kode: `onMessage` MEMANG mengecek `role === "cs"` persis (menolak `cs-demo`), jadi secara desain percobaan itu ditolak; dicatat di sini sebagai dokumentasi arsitektur, bukan karena ada jalan tembus yang terbukti.
 
 ---
 
@@ -235,15 +257,11 @@ Lihat `projects/interview-prep/visibility-rules.md` (lokal, tidak di-deploy) unt
 
 ## 11. Yang sengaja tidak dikerjakan / ditunda (jujur, bukan diklaim selesai)
 
-Scope permintaan ("PERLUASAN"/"PERLUASAN 2"/"PERLUASAN 3") jauh melampaui waktu 1 malam. Diprioritaskan: inti (AIChatAgent+LangGraph+Langfuse) → X-Ray → Publik/Presenter → Security → Integritas data (semua di atas, WAJIB & selesai). **Ditunda** (worker kedua mengerjakan sebagian di branch `feat/extras`, lihat status integrasi di `projects/interview-prep/plan-agents-sdk-langgraph-langfuse.md`):
+Scope permintaan ("PERLUASAN"/"PERLUASAN 2"/"PERLUASAN 3") jauh melampaui waktu 1 malam. Diprioritaskan: inti (AIChatAgent+LangGraph+Langfuse) → X-Ray → Publik/Presenter → Security → Integritas data → fix P0 freeze/tombol error → merge `feat/extras` (semua di atas, WAJIB & selesai, lihat §14 untuk detail extras). **Ditunda**:
 - Hybrid RAG + reranker (bge-reranker) — effort tinggi vs sisa waktu, RAG single-vector threshold 0.45 sudah memadai untuk demo ini.
 - Grounding/faithfulness check tambahan (NLI/LLM-judge terpisah) — groundedness saat ini hanya memastikan ID sitasi ADA di hasil retrieval (sama seperti v1), belum memvalidasi klaimnya didukung chunk tersebut.
 - Human-in-the-loop interrupt/resume checkpoint LangGraph NATIVE (`interrupt()`/`Command`) — four-eyes restrukturisasi (§7.4/§10) mencapai efek yang sama (aksi berisiko ditahan sampai approve CS) lewat status D1, BUKAN lewat mekanisme interrupt LangGraph bawaan — perbedaan teknis yang jujur dicatat: tidak ada checkpoint/resume state-graph yang sesungguhnya dijeda-lanjutkan, hanya gate status di lapisan data.
-- Semantic cache + model routing/cascade + AI Gateway penuh.
-- Voice note (Whisper/TTS), deteksi bahasa otomatis eksplisit — guardrail sudah toleran bahasa informal/daerah (16 kasus eval `informal_*`), jadi WOW incremental dari fitur dedicated lebih rendah dibanding effort-nya.
-- Memori jangka panjang per mitra (consent-gated PDP).
-- Langfuse prompt management (prompt berversi dari Langfuse Console) + online eval (LLM-judge pada trafik live) — dataset+experiment (§5.3) tetap jalan, dua fitur ini butuh setup manual UI Langfuse yang tidak sempat.
-- Cloudflare Workflows SLA — ditandai opsional oleh Bagus sendiri sejak awal.
+- **Semantic cache + model routing/cascade penuh + AI Gateway, memori jangka panjang per mitra, Langfuse prompt management + online eval** — kode SUDAH digabung, diuji unit (77 test), dan reachable langsung di `/api/extras/*`, tapi `FEATURE_*` flag-nya tetap OFF di live demo karena masing-masing butuh sesuatu yang belum diverifikasi aman untuk malam ini: semantic cache perlu diyakinkan dulu `scanOutputForPII` benar-benar menyaring SEMUA kasus sebelum vektor tersimpan permanen di index baru; AI Gateway belum dibuat di dashboard (`AI_GATEWAY_ACCOUNT_ID`/`AI_GATEWAY_ID` kosong); memori jangka panjang menyentuh consent PDP (risiko reputasi kalau ada bug display ke orang yang salah, bukan risiko teknis); prompt management/online eval butuh setup manual di Langfuse Console yang tidak sempat diverifikasi live. Detail per fitur, lengkap toggle-nya: §14.
 - *(v1, tidak berubah)* Petugas lapangan copilot tool&UI khusus, HMAC WORM anchoring eksternal, rate limiting/lockout verifikasi identitas per percobaan gagal, auth CS produksi SSO/RBAC.
 
 ---
@@ -268,6 +286,8 @@ npx wrangler secret put LANGFUSE_PUBLIC_KEY
 npx wrangler secret put LANGFUSE_SECRET_KEY
 npx wrangler secret put AUDIT_HMAC_KEY        # nilai acak, mis. `openssl rand -hex 32`
 npx wrangler secret put PRESENTER_KEY         # nilai acak terpisah
+npx wrangler vectorize create modal-mitra-semantic-cache --dimensions=1024 --metric=cosine  # sekali, untuk binding CACHE_VECTORIZE (feat/extras #3, lihat §14)
+npm run test:extras                            # 77 unit test feat/extras, vitest --pool=threads --poolOptions.threads.maxThreads=2 (batas memori laptop)
 npm run deploy                                 # build UI + wrangler deploy (name: modal-mitra-demo-v2)
 npm run eval                                   # MMK_BASE_URL=<url> npm run eval untuk target lain
 npm run latency
@@ -275,4 +295,23 @@ npm run latency
 
 **Identitas demo untuk skenario live**: sama seperti v1 — Mitra `MIT-0001` (`MMK-100001`, `1985-03-12`, Sri Wahyuni), `MIT-0002` (`MMK-100002`, `1990-07-20`, Yanti Kusuma); Pendana `PND-0001` (`1992-01-15`, Andi Pratama), `PND-0002` (`1988-09-09`, Budi Hartono).
 
-**Catatan memori laptop**: hanya jalankan satu proses dev server (aturan laptop 18GB); untuk demo, cukup pakai URL yang sudah dideploy.
+**Catatan memori laptop**: hanya jalankan satu proses dev server (aturan laptop 18GB); untuk demo, cukup pakai URL yang sudah dideploy. Laptop ini sempat reboot 3× karena OOM saat sesi kerja ini (lihat §0.2) — pelajaran yang diambil: tutup Chromium/dev-server/worker tambahan begitu selesai dipakai, jangan dibiarkan hidup di belakang.
+
+---
+
+## 14. feat/extras — fitur tambahan (worker kedua, digabung ke main sesi ini)
+
+Dikerjakan paralel di branch `feat/extras` (worktree terpisah, `src/extras/*`, `ui/src/extras/*`), satu titik integrasi (`app.route("/api/extras", extrasApp)`, `src/extras/router.ts`) agar tidak bertabrakan dengan kerja worker inti. Setiap fitur punya toggle `FEATURE_*` sendiri (`wrangler.toml [vars]`, lihat `src/extras/config.ts`) — aman dimatikan tanpa redeploy kode. **77 unit test** (`npm run test:extras`) lolos untuk ke-6 fitur.
+
+| # | Fitur | Status di live demo | Keterangan |
+|---|---|---|---|
+| 1 | **Voice note** — rekam di UI (`MediaRecorder`) → Whisper (`@cf/openai/whisper-large-v3-turbo`, Workers AI) → teks masuk alur chat seperti pesan biasa; balasan suara opsional (TTS Workers AI, fallback Web Speech API browser bila model TTS Indonesia tidak tersedia) | **HIDUP** (`FEATURE_VOICE=true`) | Tombol 🎤 di input chat (`VoiceRecorderButton`, `ui/src/extras/VoiceRecorder.tsx`), event X-Ray `stt`/`tts` |
+| 2 | **Deteksi bahasa & gaya balasan** — heuristik leksikon/regex (Indonesia informal, Jawa ringan, Sunda ringan), TANPA panggilan LLM tambahan (murah, deterministik, bisa dites tanpa model) | **HIDUP** (`FEATURE_LANG_DETECT=true`) | Dipanggil tiap giliran di `ChatAgent.onChatMessage` SEBELUM `runAgentGraph`, hasil `styleInstruction` ditempel sebagai aturan ke-8 di system prompt (7 aturan ketat lama TIDAK diubah) — lihat §8.1 untuk cara event `lang_detect` sampai ke X-Ray, **diverifikasi live** (pesan informal → event `lang_detect` muncul di X-Ray) |
+| 3 | **Semantic cache** (Vectorize index terpisah `CACHE_VECTORIZE`, `scanOutputForPII` sebagai pagar wajib sebelum simpan) **+ model routing/cascade (Kenari) + AI Gateway wrapper** | **cache/gateway OFF**, routing endpoint tersedia (`FEATURE_SEMANTIC_CACHE=false`, `FEATURE_AI_GATEWAY=false`, `FEATURE_MODEL_ROUTING=true`) | Index `modal-mitra-semantic-cache` sudah dibuat (1024-dim cosine) supaya binding valid kapan saja dinyalakan; endpoint demo `/api/extras/cache/lookup` reachable untuk smoke test terlepas dari belum dipanggil dari alur chat utama — lihat §11 kenapa OFF |
+| 4 | **Cloudflare Workflows untuk SLA/eskalasi handoff** — timer DURABLE (`step.sleep`, bertahan lintas restart/deploy, bukan `setTimeout`), mengecek N menit setelah handoff apakah CS sudah membalas (baca `sessions_index`), catat ke `sla_escalations` | **HIDUP** (`FEATURE_SLA_WORKFLOW=true`, `SLA_MINUTES=5`) | `ChatAgent` memanggil `env.SLA_WORKFLOW.create()` SEKALI tepat saat `handoff.triggered` (non-fatal bila gagal start — tidak menjatuhkan giliran chat); hasil eskalasi di `GET /api/extras/sla/escalations`, binding `Workflows: SLA_WORKFLOW → SlaEscalationWorkflow` terlihat di output `wrangler deploy` |
+| 5 | **Memori jangka panjang per mitra/pendana** — ringkasan preferensi lintas sesi, consent-gated di SETIAP operasi baca/tulis (bukan cuma sekali), bisa dihapus kapan saja (hak subjek data UU PDP), `scanOutputForPII` wajib sebelum simpan | **OFF** (`FEATURE_LONG_TERM_MEMORY=false`) | Endpoint `/api/extras/memory/*` reachable untuk demo/test terpisah dari alur chat; §11 untuk alasan OFF |
+| 6 | **Langfuse prompt management** (prompt berversi dari Langfuse Console) **+ online eval** (LLM-judge pada trafik live) | **OFF** (`FEATURE_PROMPT_MGMT=false`, `FEATURE_ONLINE_EVAL=false`) | Dataset+experiment offline (§5.3) tetap jalan terpisah; dua fitur ini butuh setup manual UI Langfuse yang belum diverifikasi live — endpoint `/api/extras/prompts/*` tetap reachable untuk dites langsung |
+
+**Skema X-Ray extras** (§8.1 untuk detail adapter): `src/extras/xray.ts` `ExtrasXrayEvent` (`{type, at, sessionId?, data}`) — tipe event: `stt`, `tts`, `lang_detect`, `cache_hit`/`cache_miss`, `route`, `sla_timer`/`sla_escalated`, `memory_read`/`memory_write`/`memory_deleted`, `prompt_fetch`, `online_eval`.
+
+**D1 tambahan** (sudah di-migrasi ke remote, idempotent): `sla_escalations` (hasil keputusan tiap workflow run), `long_term_memory` (consent + ringkasan, kosong/tidak terpakai selama fitur #5 OFF).

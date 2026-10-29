@@ -1,112 +1,112 @@
 {
   "baseUrl": "https://modal-mitra-demo-v2.markas-auracheck.workers.dev",
-  "measuredAt": "2026-10-29T18:00:44.365Z",
+  "measuredAt": "2026-10-29T18:55:29.791Z",
   "n": 18,
   "firstTokenMs": {
-    "p50": 4015,
-    "p95": 12426,
+    "p50": 3775,
+    "p95": 11445,
     "min": 0,
-    "max": 12426
+    "max": 11445
   },
   "totalMs": {
-    "p50": 4015,
-    "p95": 12426,
-    "min": 96,
-    "max": 12426
+    "p50": 3775,
+    "p95": 11445,
+    "min": 45,
+    "max": 11445
   },
   "byCase": [
     {
       "label": "rag_simple",
-      "firstTokenMs": 4015,
-      "totalMs": 4015
+      "firstTokenMs": 3775,
+      "totalMs": 3775
     },
     {
       "label": "rag_simple",
-      "firstTokenMs": 3448,
-      "totalMs": 3448
+      "firstTokenMs": 3016,
+      "totalMs": 3016
     },
     {
       "label": "rag_simple",
-      "firstTokenMs": 3118,
-      "totalMs": 3118
+      "firstTokenMs": 3228,
+      "totalMs": 3228
     },
     {
       "label": "verify_plus_lookup",
-      "firstTokenMs": 10969,
-      "totalMs": 10969
+      "firstTokenMs": 8076,
+      "totalMs": 8076
     },
     {
       "label": "verify_plus_lookup",
-      "firstTokenMs": 10117,
-      "totalMs": 10117
+      "firstTokenMs": 8005,
+      "totalMs": 8005
     },
     {
       "label": "verify_plus_lookup",
-      "firstTokenMs": 8586,
-      "totalMs": 8586
+      "firstTokenMs": 8542,
+      "totalMs": 8542
     },
     {
       "label": "majelis_schedule",
-      "firstTokenMs": 11193,
-      "totalMs": 11193
+      "firstTokenMs": 8120,
+      "totalMs": 8120
     },
     {
       "label": "majelis_schedule",
-      "firstTokenMs": 10603,
-      "totalMs": 10603
+      "firstTokenMs": 9516,
+      "totalMs": 9516
     },
     {
       "label": "majelis_schedule",
-      "firstTokenMs": 9834,
-      "totalMs": 9834
+      "firstTokenMs": 8985,
+      "totalMs": 8985
     },
     {
       "label": "pendana_portfolio",
-      "firstTokenMs": 12426,
-      "totalMs": 12426
+      "firstTokenMs": 11445,
+      "totalMs": 11445
     },
     {
       "label": "pendana_portfolio",
-      "firstTokenMs": 9499,
-      "totalMs": 9499
+      "firstTokenMs": 9464,
+      "totalMs": 9464
     },
     {
       "label": "pendana_portfolio",
-      "firstTokenMs": 10167,
-      "totalMs": 10167
+      "firstTokenMs": 8757,
+      "totalMs": 8757
     },
     {
       "label": "guard_blocked_scope",
       "firstTokenMs": 0,
-      "totalMs": 99,
+      "totalMs": 87,
       "blockedByGuard": "scope"
     },
     {
       "label": "guard_blocked_scope",
       "firstTokenMs": 0,
-      "totalMs": 102,
+      "totalMs": 90,
       "blockedByGuard": "scope"
     },
     {
       "label": "guard_blocked_scope",
       "firstTokenMs": 0,
-      "totalMs": 97,
+      "totalMs": 91,
       "blockedByGuard": "scope"
     },
     {
       "label": "handoff_explicit",
       "firstTokenMs": 0,
-      "totalMs": 121
+      "totalMs": 83
     },
     {
       "label": "handoff_explicit",
       "firstTokenMs": 0,
-      "totalMs": 102
+      "totalMs": 45
     },
     {
       "label": "handoff_explicit",
       "firstTokenMs": 0,
-      "totalMs": 96
+      "totalMs": 93
     }
   ]
 }

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useAgent } from "agents/react";
 import { useAgentChat } from "@cloudflare/ai-chat/react";
+import { VoiceRecorderButton } from "./extras/VoiceRecorder";
 
 type Persona = "mitra" | "pendana";
 
@@ -224,6 +225,7 @@ export default function ChatPanel({ sessionId, presenter }: { sessionId: string;
           placeholder={mode === "HUMAN" ? "CS sedang menangani percakapan ini..." : "Tulis pesan..."}
         />
         <button onClick={() => send()}>Kirim</button>
+        <VoiceRecorderButton onTranscribed={(text) => send(text)} />
       </div>
     </div>
     {showXray && (
