@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useAgent } from "agents/react";
 import { useAgentChat } from "@cloudflare/ai-chat/react";
 import { VoiceRecorderButton } from "./extras/VoiceRecorder";
+import type { DemoLink } from "./learn/types";
 
 type Persona = "mitra" | "pendana";
 
@@ -60,7 +61,17 @@ const RED_TEAM_ATTACKS = [
 // ke `useAgent`+`useAgentChat` (Cloudflare Agents SDK) — persistensi pesan & resumable streaming
 // otomatis dari server (src/do/ChatAgent.ts). Event non-chat (init/mode_change/typing CS) tetap
 // lewat `onMessage` kustom di koneksi yang SAMA (protokol kustom ringan, lihat ChatAgent.ts).
-export default function ChatPanel({ sessionId, presenter }: { sessionId: string; presenter: boolean }) {
+export default function ChatPanel({
+  sessionId,
+  presenter,
+  pendingDemo,
+  onDemoConsumed,
+}: {
+  sessionId: string;
+  presenter: boolean;
+  pendingDemo?: DemoLink | null;
+  onDemoConsumed?: () => void;
+}) {
   const [persona, setPersona] = useState<Persona>("mitra");
   const [personaLocked, setPersonaLocked] = useState(false);
   const [input, setInput] = useState("");
@@ -72,8 +83,10 @@ export default function ChatPanel({ sessionId, presenter }: { sessionId: string;
   const [showRedTeam, setShowRedTeam] = useState(false);
   const [pipeline, setPipeline] = useState<Record<string, { phase: string; data: any; durationMs?: number }>>({});
   const [xrayLog, setXrayLog] = useState<{ node: string; phase: string; data: any; ts: string }[]>([]);
+  const [demoHint, setDemoHint] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const typingTimeoutRef = useRef<number | undefined>(undefined);
+  const consumedDemoRef = useRef<DemoLink | null>(null);
 
   const agent = useAgent({
     agent: "ChatAgent",
@@ -113,6 +126,22 @@ export default function ChatPanel({ sessionId, presenter }: { sessionId: string;
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, status]);
+
+  // Datang dari halaman /learn ("Lihat di demo" / "Coba serang") -> kirim pesan nyata
+  // (bukan rekaman) sekali saja per klik, lalu tampilkan hint singkat apa yang perlu diperhatikan.
+  // FIX (merge feat/learn + feat/extras/X-Ray): tombol ini DULU hanya kirim ke chat polos dengan
+  // catatan "Red Team Arena+X-Ray menyusul" karena ditulis sebelum modul itu ada di branch ini —
+  // sekarang panel X-Ray (dan Red Team untuk serangan) dibuka sungguhan, bukan lagi placeholder.
+  useEffect(() => {
+    if (!pendingDemo || consumedDemoRef.current === pendingDemo) return;
+    consumedDemoRef.current = pendingDemo;
+    setShowXray(true);
+    if (pendingDemo.redteam) setShowRedTeam(true);
+    send(pendingDemo.autosend);
+    setDemoHint(pendingDemo.watchFor);
+    onDemoConsumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingDemo]);
 
   function notifyTyping(isTyping: boolean) {
     try {
@@ -181,6 +210,13 @@ export default function ChatPanel({ sessionId, presenter }: { sessionId: string;
 
       {mode === "HUMAN" && handoffSummary && (
         <div className="wa-handoff-banner">🧑‍💼 Dialihkan ke CS manusia. Ringkasan otomatis: {handoffSummary}</div>
+      )}
+
+      {demoHint && (
+        <div className="wa-demo-hint">
+          💡 {demoHint}
+          <button onClick={() => setDemoHint(null)} aria-label="Tutup">✕</button>
+        </div>
       )}
 
       <div className="wa-messages">
