@@ -42,5 +42,12 @@ worker `/learn` tidak perlu riset ulang isi fitur-fitur ini.
 - **Pertanyaan interview (30s)**: "Kenapa consent dicek ulang di setiap operasi tulis, bukan cuma sekali di awal?" → Jawab: persetujuan bisa ditarik kapan saja (hak subjek data, UU PDP); mengecek sekali di awal lalu mempercayainya selamanya berarti bisa menulis data baru SETELAH pengguna menarik persetujuan tanpa sadar — re-check di setiap operasi adalah pagar yang benar secara desain, bukan optimisasi prematur.
 - **WOW fact**: satu bug nyata ditemukan sendiri saat menulis unit test (SQL UPSERT yang mencampur literal inline dengan placeholder `?` membuat argumen `bind()` salah urut pada path "tarik persetujuan") — dicatat apa adanya di README §11.5, bukan disembunyikan; diperbaiki sebelum commit.
 
-<!-- Entri berikutnya (Langfuse prompt mgmt/online eval) ditambahkan di sini begitu fitur terkait
-     selesai — lihat commit feat/extras berikutnya. -->
+## Level 7 — Evaluasi & observability: Langfuse prompt management + online eval
+
+- **Analogi 1 kalimat**: "seperti resep restoran yang dicatat terpusat & berversi (bukan ditempel di dapur masing-masing cabang) — ganti satu resep, semua cabang pakai versi baru; sambil ada 'pelanggan misterius' yang sesekali diam-diam menilai masakan yang sungguhan disajikan, bukan cuma menu tes."
+- **Lihat di demo**: panel Langfuse menunjukkan prompt `modal-mitra-sapaan-pembuka` versi 2 (riwayat versi 1→2 dgn commit message) + skor `online_grounded`/`online_polite` dari sampel trafik live.
+- **Pertanyaan interview (30s)**: "Kenapa online eval LLM-judge tidak menggantikan golden set 45 kasus?" → Jawab: golden set deterministik murah & stabil untuk GATE CI (lulus/gagal jelas, tidak flaky); LLM-judge lebih mahal & sedikit non-deterministik tapi bisa melihat SINYAL KUALITAS TRAFIK NYATA yang golden set statis tidak bisa — keduanya pelengkap, bukan salah satu menggantikan yang lain.
+- **WOW fact**: plan awal menandai fitur ini "DITUNDA" karena dikira butuh setup manual di Langfuse Console — ternyata REST API-nya bisa create/update prompt langsung; dibuktikan dengan benar-benar membuat prompt v1 lalu meng-update ke v2 via API saat worktree ini ditulis (bukan asumsi, diverifikasi langsung).
+
+<!-- Akhir catatan /learn untuk feat/extras (6/6 fitur). -->
+

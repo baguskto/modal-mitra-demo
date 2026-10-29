@@ -66,3 +66,7 @@ SLA_MINUTES = "5"
 # hanya override bila perlu testing terhadap mock server.
 # AI_GATEWAY_ACCOUNT_ID / AI_GATEWAY_ID: isi bila AI Gateway sudah dibuat di dashboard Cloudflare
 # (lihat src/extras/cache/aiGateway.ts) — FEATURE_AI_GATEWAY tetap "false" sampai itu ada.
+# LANGFUSE_BASE_URL dipakai bersama fitur #6 (src/extras/langfuse/) — SAMA dengan yang dipakai
+# trace milik worker inti; LANGFUSE_PUBLIC_KEY/LANGFUSE_SECRET_KEY WAJIB wrangler secret (sudah
+# ada di Keychain 'langfuse-public-key'/'langfuse-secret-key' akun 'modal-mitra', terverifikasi).
+LANGFUSE_BASE_URL = "https://jp.cloud.langfuse.com"

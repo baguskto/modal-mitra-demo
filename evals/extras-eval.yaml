@@ -118,3 +118,17 @@ cases:
     consent_given: true
     input: "HP mitra 081234567890, suka dihubungi sore."
     expect: false
+
+  # --- Fitur #6: Langfuse prompt management + online eval ---
+  - feature: langfuse
+    description: lf_01_prompt_template_substitution
+    type: prompt_compile_equals
+    input: "Halo {{nama}}, status pinjaman Anda: {{status}}."
+    vars: { nama: "Sri", status: "lunas" }
+    expect: "Halo Sri, status pinjaman Anda: lunas."
+  - feature: langfuse
+    description: lf_02_unknown_placeholder_left_untouched
+    type: prompt_compile_equals
+    input: "Halo {{nama}}"
+    vars: {}
+    expect: "Halo {{nama}}"

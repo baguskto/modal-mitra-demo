@@ -178,6 +178,8 @@ npx wrangler secret put CS_TOKEN      # untuk Konsol CS/audit/history
 # feat/extras (opsional per toggle — lihat §11):
 npx wrangler vectorize create modal-mitra-semantic-cache --dimensions=1024 --metric=cosine
 npx wrangler secret put KENARI_API_KEY   # dari Keychain 'kenari-api-key' akun 'omniroute'
+npx wrangler secret put LANGFUSE_PUBLIC_KEY   # dari Keychain 'langfuse-public-key' akun 'modal-mitra'
+npx wrangler secret put LANGFUSE_SECRET_KEY   # dari Keychain 'langfuse-secret-key' akun 'modal-mitra'
 npm run deploy                         # build UI + wrangler deploy
 npx tsx scripts/run-ingest.ts https://<url-worker-anda>.workers.dev <ADMIN_KEY>
 npm run eval                           # MMK_BASE_URL=<url> npm run eval untuk target lain
@@ -316,5 +318,33 @@ saat menulis test ini sendiri: SQL UPSERT yang mencampur literal inline (`NULL`,
 placeholder posisional `?` membuat argumen `bind()` salah urut pada path "tarik persetujuan" —
 diperbaiki dengan membind SEMUA kolom sebagai placeholder eksplisit (lihat commit).
 
-### 11.6 Langfuse prompt management + online eval
-<!-- ditambahkan di sini begitu fitur terkait selesai. -->
+### 11.6 Langfuse prompt management + online eval (toggle `FEATURE_PROMPT_MGMT`/`FEATURE_ONLINE_EVAL`, default OFF)
+`src/extras/langfuse/{client,promptManagement,onlineEval,routes}.ts`. Plan awal (lihat
+`projects/interview-prep/plan-agents-sdk-langgraph-langfuse.md`) menunda fitur ini karena
+"butuh setup manual di Langfuse Console" — **ternyata TIDAK perlu**: Langfuse Prompt Management
+punya REST API (`/api/public/v2/prompts`) yang bisa create/update langsung, diverifikasi LANGSUNG
+dengan kredensial yang sudah ada (Keychain, project 'modal-mitra'):
+- Dibuat prompt sungguhan `modal-mitra-sapaan-pembuka` (label `production`) — **v1 lalu
+  benar-benar di-update ke v2** (dengan `commitMessage`) untuk membuktikan versioning jalan nyata,
+  bukan cuma desain di atas kertas — dan `modal-mitra-ringkasan-handoff` (label `staging`).
+- `getCompiledPrompt(cfg, name, variables, fallbackTemplate)` — titik integrasi: ganti string
+  hardcode di `prompts.ts`/`toolAgent.ts` dengan panggilan ini, fallback text = teks yang SUDAH
+  ADA sekarang (nol regresi bila Langfuse unreachable/lambat — prinsip "observability tidak boleh
+  mengganggu demo" yang sama dipakai `obs/langfuse.ts`). Cache 5 menit in-memory.
+
+**Online eval** (`onlineEval.ts`): LLM-judge pada **trafik live** (sampel 20% giliran, bukan cuma
+golden set statis) memakai model murah Kenari `deepseek-v4-1-flash` (reuse provider fitur #3),
+menilai `groundedScore`/`politeScore`, kirim sebagai `score-create` ke Langfuse Ingestion API
+(endpoint yang sama dipakai `LangfuseTrace` milik worker inti) — muncul di dashboard Langfuse per
+trace. **Pelengkap, bukan pengganti** assertion deterministik golden set (tetap gate utama —
+murah, stabil, mudah didebug, selaras keputusan desain existing).
+
+**Ketidakcocokan skema X-Ray yang dicatat jujur**: `src/obs/langfuse.ts` milik worker inti
+mendefinisikan `XrayEvent {node, phase, ts, durationMs, data}` (per-node graph LangGraph), sedang
+`src/extras/xray.ts` di sini memakai `{type, at, sessionId, data}` (per-aksi, mis. `'cache_hit'`).
+Kedua skema **komplementer, bukan konflik**: event extras (stt/cache_hit/route/sla_*/memory_*/
+prompt_fetch/online_eval) cocok dimasukkan ke field `data` dari node graph pembungkusnya (mis.
+`cache_hit` terjadi DI DALAM node `tools`) saat digabungkan — dicatat di sini sebagai titik yang
+perlu diputuskan worker inti saat merge, bukan diam-diam diasumsikan sudah cocok.
+
+17 unit test + 2 eval case (`npm run eval:extras`, total **22/22** semua fitur extras).

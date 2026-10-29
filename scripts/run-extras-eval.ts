@@ -10,6 +10,7 @@ import { estimateComplexity } from "../src/extras/cache/modelRouter";
 import { KENARI_ALLOWED_MODELS } from "../src/extras/cache/kenariProvider";
 import { decideEscalation, type SessionRow } from "../src/extras/workflows/decision";
 import { evaluateMemoryWrite } from "../src/extras/memory/longTermMemory";
+import { compilePrompt } from "../src/extras/langfuse/promptManagement";
 
 interface Case {
   feature: string;
@@ -19,6 +20,7 @@ interface Case {
   step_index?: number;
   session_row?: SessionRow;
   consent_given?: boolean;
+  vars?: Record<string, string>;
   expect: string | number | boolean;
 }
 
@@ -49,6 +51,10 @@ function runCase(c: Case): { pass: boolean; actual?: string; reason?: string } {
     case "memory_write_allowed": {
       const actual = evaluateMemoryWrite(c.consent_given ?? false, c.input ?? "").allowed;
       return { pass: actual === c.expect, actual: String(actual) };
+    }
+    case "prompt_compile_equals": {
+      const actual = compilePrompt(c.input ?? "", c.vars ?? {});
+      return { pass: actual === c.expect, actual };
     }
     default:
       return { pass: false, reason: `unknown assertion type: ${c.type}` };
