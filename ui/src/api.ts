@@ -1,26 +1,21 @@
-// Konsol CS & audit log TERLINDUNGI token demo sederhana (lihat README §Keputusan Desain —
-// bukan auth produksi, hanya shared-secret agar endpoint internal tidak terbuka tanpa apa pun
-// seperti pada basis SIGAP Nasabah). Token diminta sekali via prompt(), disimpan di sessionStorage.
+// FIX P0 (freeze/"tombol error"): token ini DULU diminta via window.prompt() dan harus = secret
+// CS_TOKEN asli yang pengunjung publik tidak mungkin tahu -> dialog blocking berulang + semua
+// panggilan API 401. Sekarang token demo publik ini SENGAJA tidak rahasia (lihat src/index.ts
+// PUBLIC_DEMO_CS_TOKEN) — cukup untuk akses BACA konsol CS tanpa prompt sama sekali. Aksi yang
+// mengubah data tetap ditolak server (403) kecuali mode Presenter (cookie, otomatis terkirim
+// same-origin) atau CS_TOKEN asli — lihat requireFullCs di server.
 function getCsToken(): string {
-  let token = sessionStorage.getItem("mmk_cs_token");
-  if (!token) {
-    token = window.prompt("Token akses Konsol CS (demo):") ?? "";
-    sessionStorage.setItem("mmk_cs_token", token);
-  }
-  return token;
+  return "demo-mitra-cs-2026";
 }
 
 function csHeaders(): HeadersInit {
   return { "x-cs-token": getCsToken() };
 }
 
-/** Token salah/kosong -> hapus biar lain kali diminta ulang, dan kembalikan array kosong (bukan crash .map di UI). */
+/** Gagal (misal DO/D1 belum siap) -> array kosong, bukan crash .map di UI. */
 async function csGetList(url: string): Promise<any[]> {
   const res = await fetch(url, { headers: csHeaders() });
-  if (!res.ok) {
-    sessionStorage.removeItem("mmk_cs_token");
-    return [];
-  }
+  if (!res.ok) return [];
   return res.json();
 }
 
@@ -60,28 +55,22 @@ export async function rejectHitl(restruId: string, note?: string) {
   return res.json();
 }
 
-// Panel admin (Presenter-only di UI) — kill-switch per tool. Admin key terpisah dari CS_TOKEN.
-function getAdminKey(): string {
-  let key = sessionStorage.getItem("mmk_admin_key");
-  if (!key) {
-    key = window.prompt("Admin key (panel Presenter):") ?? "";
-    sessionStorage.setItem("mmk_admin_key", key);
-  }
-  return key;
-}
+// Panel admin (Presenter-only di UI — tombol ini hanya dirender saat `presenter === true`, lihat
+// CsConsole.tsx). FIX P0: dulu minta x-admin-key via prompt() juga; sekarang server menerima cookie
+// Presenter (dikirim otomatis, same-origin) sebagai pengganti — tidak perlu prompt/secret kedua.
 export async function listKillSwitches() {
-  const res = await fetch(`/api/admin/kill-switch`, { headers: { "x-admin-key": getAdminKey() } });
-  if (!res.ok) { sessionStorage.removeItem("mmk_admin_key"); return []; }
+  const res = await fetch(`/api/admin/kill-switch`);
+  if (!res.ok) return [];
   return res.json();
 }
 export async function tamperDemo(sessionId: string) {
-  const res = await fetch(`/api/admin/tamper-demo/${encodeURIComponent(sessionId)}`, { method: "POST", headers: { "x-admin-key": getAdminKey() } });
+  const res = await fetch(`/api/admin/tamper-demo/${encodeURIComponent(sessionId)}`, { method: "POST" });
   return res.json();
 }
 export async function setKillSwitch(toolName: string, disabled: boolean) {
   const res = await fetch(`/api/admin/kill-switch/${encodeURIComponent(toolName)}`, {
     method: "POST",
-    headers: { "x-admin-key": getAdminKey(), "content-type": "application/json" },
+    headers: { "content-type": "application/json" },
     body: JSON.stringify({ disabled, reason: disabled ? "demo kill-switch" : undefined }),
   });
   return res.json();

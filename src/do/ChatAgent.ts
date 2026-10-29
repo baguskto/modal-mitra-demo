@@ -136,23 +136,24 @@ export class ChatAgent extends AIChatAgent<ChatAgentEnv, SessionMeta> {
     }
   }
 
+  // "cs" (full, bisa takeover/balas) vs "cs-demo" (observer publik, read-only — lihat
+  // src/index.ts forwardToDO) — Worker SUDAH memverifikasi token/presenter sebelum menentukan
+  // nilai ini, jadi DO tinggal percaya query `role`, TIDAK mengecek ulang CS_TOKEN di sini (dulu
+  // double-check ini menolak koneksi WS siapa pun yang tidak punya CS_TOKEN asli persis -> Konsol
+  // CS gagal connect/"freeze" bahkan untuk Presenter yang hanya login via passphrase, bukan token).
+  private roleOfRequest(ctx: ConnectionContext): "customer" | "cs" | "cs-demo" {
+    const r = new URL(ctx.request.url).searchParams.get("role");
+    return r === "cs" ? "cs" : r === "cs-demo" ? "cs-demo" : "customer";
+  }
+
   async getConnectionTags(connection: Connection, ctx: ConnectionContext): Promise<string[]> {
     const base = (await (super.getConnectionTags as any)?.(connection, ctx)) ?? [];
-    const url = new URL(ctx.request.url);
-    const role = url.searchParams.get("role") === "cs" ? "cs" : "customer";
-    return [...base, role];
+    const role = this.roleOfRequest(ctx);
+    return [...base, role, role === "customer" ? "customer" : "staff"];
   }
 
   async onConnect(connection: Connection, ctx: ConnectionContext) {
-    const url = new URL(ctx.request.url);
-    const role = url.searchParams.get("role") === "cs" ? "cs" : "customer";
-    if (role === "cs") {
-      const token = url.searchParams.get("token");
-      if (!this.env.CS_TOKEN || token !== this.env.CS_TOKEN) {
-        connection.close(4401, "unauthorized");
-        return;
-      }
-    }
+    const role = this.roleOfRequest(ctx);
     connection.setState({ role });
     await super.onConnect(connection, ctx);
     try {
@@ -209,7 +210,7 @@ export class ChatAgent extends AIChatAgent<ChatAgentEnv, SessionMeta> {
     }
 
     if (msg.type === "typing") {
-      const targetTag = role === "customer" ? "cs" : "customer";
+      const targetTag = role === "customer" ? "staff" : "customer";
       const json = JSON.stringify({ type: "typing", role, isTyping: !!msg.isTyping });
       for (const conn of this.getConnections(targetTag)) {
         try {

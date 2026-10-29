@@ -24,31 +24,55 @@ export interface Env {
   AUDIT_HMAC_KEY?: string;
 }
 
-const app = new Hono<{ Bindings: Env }>();
+const app = new Hono<{ Bindings: Env; Variables: { csFull: boolean } }>();
 
-// Konsol CS, riwayat mentah sesi, dan audit log SEBELUMNYA terbuka tanpa autentikasi apa pun
-// (celah terbesar yang ditemukan review) — siapa saja yang tahu sessionId bisa melihat/membalas
-// sebagai CS. Ditambahkan shared-secret token demo (BUKAN auth produksi/SSO/RBAC, lihat README
-// §Keputusan Desain) sebagai lapisan minimum: header x-cs-token untuk REST, query ?token= untuk
-// WS (browser tidak bisa mengirim header kustom saat handshake WebSocket).
+// Mode Publik vs Presenter (visibility-rules.md, WAJIB) — cookie HttpOnly bertanda, bukan
+// passphrase mentah (lihat security/presenter.ts). `isPresenter` dipakai untuk (a) membebaskan
+// rate limit publik di bawah, (b) /api/presenter/status yang dibaca frontend untuk
+// menyembunyikan/menampilkan panel admin, link Langfuse, dll, (c) bypass x-cs-token/x-admin-key
+// di bawah supaya Bagus (presenter) tidak perlu mengetik ulang secret di browser.
+async function isPresenter(c: any): Promise<boolean> {
+  const token = readCookie(c.req.header("cookie"), "mmk_presenter");
+  return verifyPresenterToken(c.env.PRESENTER_KEY, token);
+}
+
+// FIX (P0 "banyak freezing dan button error"): token Konsol CS SEBELUMNYA diminta via
+// window.prompt() dan harus = wrangler secret CS_TOKEN asli — pengunjung publik jelas tidak
+// punya nilainya, jadi prompt tampil berulang (terasa seperti freeze, dialog blocking) dan setiap
+// panggilan API balik 401 (token langsung dihapus, UI terasa "semua tombol error"). Sesuai
+// visibility-rules.md ("Konsol CS ... mode demo, token demo bawaan"): token publik yang SENGAJA
+// tidak rahasia (bukan secret asli, data yang dilindungi tetap sintetis) dipakai otomatis tanpa
+// prompt untuk akses BACA; aksi yang mengubah data (takeover/release/balas CS/approve/reject HITL)
+// tetap mewajibkan mode Presenter ATAU CS_TOKEN asli (lihat requireFullCs di bawah).
+const PUBLIC_DEMO_CS_TOKEN = "demo-mitra-cs-2026";
+
 async function requireCsToken(c: any, next: () => Promise<void>) {
   const token = c.req.header("x-cs-token") ?? c.req.query("token");
-  if (!c.env.CS_TOKEN || token !== c.env.CS_TOKEN) {
+  const full = (await isPresenter(c)) || (!!c.env.CS_TOKEN && token === c.env.CS_TOKEN);
+  const demo = token === PUBLIC_DEMO_CS_TOKEN;
+  if (!full && !demo) {
     return c.json({ error: "unauthorized" }, 401);
   }
+  c.set("csFull", full);
   await next();
 }
 app.use("/api/cs/*", requireCsToken);
 app.use("/api/audit/*", requireCsToken);
 app.use("/api/chat/:sessionId/history", requireCsToken);
 
-// Mode Publik vs Presenter (visibility-rules.md, WAJIB) — cookie HttpOnly bertanda, bukan
-// passphrase mentah (lihat security/presenter.ts). `isPresenter` dipakai untuk (a) membebaskan
-// rate limit publik di bawah, (b) endpoint /api/presenter/status yang dibaca frontend untuk
-// menyembunyikan/menampilkan panel admin, link Langfuse, dll (lihat ui/src/PresenterContext.tsx).
-async function isPresenter(c: any): Promise<boolean> {
-  const token = readCookie(c.req.header("cookie"), "mmk_presenter");
-  return verifyPresenterToken(c.env.PRESENTER_KEY, token);
+/** Aksi yang mengubah data (bukan sekadar lihat) — hanya Presenter atau pemegang CS_TOKEN asli. */
+function requireFullCs(c: any) {
+  if (!c.get("csFull")) return c.json({ error: "Aksi ini khusus mode Presenter." }, 403);
+  return null;
+}
+
+/** x-admin-key ATAU cookie Presenter — dipakai panel kill-switch & demo-tamper (keduanya sudah
+ * presenter-only di UI). /api/admin/ingest TIDAK memakai ini — tetap wajib ADMIN_KEY asli karena
+ * dipanggil dari script (scripts/run-ingest.ts), bukan browser. */
+async function requireAdminOrPresenter(c: any): Promise<boolean> {
+  if (await isPresenter(c)) return true;
+  const key = c.req.header("x-admin-key");
+  return !!c.env.ADMIN_KEY && key === c.env.ADMIN_KEY;
 }
 
 app.post("/api/presenter/login", async (c) => {
@@ -107,9 +131,14 @@ app.get("/api/chat/:sessionId/ws", async (c) => {
 });
 
 app.get("/api/cs/:sessionId/ws", async (c) => {
+  // Kanal observer+takeover CS. requireCsToken (di atas, terpasang di /api/cs/*) sudah menerima
+  // token demo publik untuk BACA; di sini kirim peran "cs-demo" bila bukan csFull supaya DO bisa
+  // menolak takeover/release/cs_message dari koneksi demo (lihat ChatAgent.ts) -> publik tetap bisa
+  // mengamati percakapan live tapi tidak bisa mengambil alih/membalas sebagai CS.
   const sessionId = c.req.param("sessionId");
   const stub = getDO(c.env, sessionId);
-  return forwardToDO(stub, c.req.raw, "/ws", { sessionId, role: "cs" });
+  const role = c.get("csFull") ? "cs" : "cs-demo";
+  return forwardToDO(stub, c.req.raw, "/ws", { sessionId, role });
 });
 
 app.post("/api/chat/:sessionId/message", async (c) => {
@@ -138,6 +167,8 @@ app.get("/api/chat/:sessionId/history", async (c) => {
 });
 
 app.post("/api/cs/:sessionId/takeover", async (c) => {
+  const denied = requireFullCs(c);
+  if (denied) return denied;
   const sessionId = c.req.param("sessionId");
   const stub = getDO(c.env, sessionId);
   const res = await stub.fetch(`https://do/takeover?sessionId=${encodeURIComponent(sessionId)}`, { method: "POST" });
@@ -145,6 +176,8 @@ app.post("/api/cs/:sessionId/takeover", async (c) => {
 });
 
 app.post("/api/cs/:sessionId/release", async (c) => {
+  const denied = requireFullCs(c);
+  if (denied) return denied;
   const sessionId = c.req.param("sessionId");
   const stub = getDO(c.env, sessionId);
   const res = await stub.fetch(`https://do/release?sessionId=${encodeURIComponent(sessionId)}`, { method: "POST" });
@@ -152,6 +185,8 @@ app.post("/api/cs/:sessionId/release", async (c) => {
 });
 
 app.post("/api/cs/:sessionId/reply", async (c) => {
+  const denied = requireFullCs(c);
+  if (denied) return denied;
   const sessionId = c.req.param("sessionId");
   const body = await c.req.json<{ text: string }>();
   const stub = getDO(c.env, sessionId);
@@ -189,6 +224,8 @@ app.get("/api/cs/hitl/pending", async (c) => {
 });
 
 app.post("/api/cs/hitl/:restruId/approve", async (c) => {
+  const denied = requireFullCs(c);
+  if (denied) return denied;
   const restruId = c.req.param("restruId");
   await c.env.DB.prepare(`UPDATE restructuring_requests SET status = 'submitted' WHERE restru_id = ? AND status = 'pending_cs_approval'`).bind(restruId).run();
   await c.env.DB.prepare(`INSERT INTO record_versions (record_type, record_id, status, changed_by, note) VALUES ('restructuring_request', ?, 'submitted', 'cs', 'four-eyes approve')`).bind(restruId).run();
@@ -196,6 +233,8 @@ app.post("/api/cs/hitl/:restruId/approve", async (c) => {
 });
 
 app.post("/api/cs/hitl/:restruId/reject", async (c) => {
+  const denied = requireFullCs(c);
+  if (denied) return denied;
   const restruId = c.req.param("restruId");
   const body = await c.req.json<{ note?: string }>().catch(() => ({}) as { note?: string });
   await c.env.DB.prepare(`UPDATE restructuring_requests SET status = 'rejected' WHERE restru_id = ? AND status = 'pending_cs_approval'`).bind(restruId).run();
@@ -256,8 +295,7 @@ app.post("/api/admin/ingest", async (c) => {
 // Kill-switch per tool (integritas data §Security) — mode Presenter-only di UI, tapi tetap
 // dilindungi x-admin-key (BUKAN CS_TOKEN) seperti endpoint admin lain.
 app.post("/api/admin/kill-switch/:toolName", async (c) => {
-  const key = c.req.header("x-admin-key");
-  if (!c.env.ADMIN_KEY || key !== c.env.ADMIN_KEY) return c.json({ error: "unauthorized" }, 401);
+  if (!(await requireAdminOrPresenter(c))) return c.json({ error: "unauthorized" }, 401);
   const toolName = c.req.param("toolName");
   const body = await c.req.json<{ disabled: boolean; reason?: string }>();
   await c.env.DB.prepare(
@@ -270,8 +308,7 @@ app.post("/api/admin/kill-switch/:toolName", async (c) => {
 });
 
 app.get("/api/admin/kill-switch", async (c) => {
-  const key = c.req.header("x-admin-key");
-  if (!c.env.ADMIN_KEY || key !== c.env.ADMIN_KEY) return c.json({ error: "unauthorized" }, 401);
+  if (!(await requireAdminOrPresenter(c))) return c.json({ error: "unauthorized" }, 401);
   const rows = await c.env.DB.prepare(`SELECT tool_name, disabled, reason, updated_at FROM tool_kill_switch`).all();
   return c.json(rows.results);
 });
@@ -281,8 +318,7 @@ app.get("/api/admin/kill-switch", async (c) => {
 // HMAC-nya tidak dihitung ulang) -> verifyChain() akan melaporkan RUSAK mulai dari baris itu.
 // Hanya menyentuh kolom `payload`, dilindungi x-admin-key, data sintetis semata.
 app.post("/api/admin/tamper-demo/:sessionId", async (c) => {
-  const key = c.req.header("x-admin-key");
-  if (!c.env.ADMIN_KEY || key !== c.env.ADMIN_KEY) return c.json({ error: "unauthorized" }, 401);
+  if (!(await requireAdminOrPresenter(c))) return c.json({ error: "unauthorized" }, 401);
   const sessionId = c.req.param("sessionId");
   const row = await c.env.DB.prepare(`SELECT seq FROM audit_log WHERE session_id = ? ORDER BY seq ASC LIMIT 1`).bind(sessionId).first<{ seq: number }>();
   if (!row) return c.json({ error: "sesi tidak punya audit log" }, 404);

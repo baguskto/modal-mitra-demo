@@ -135,10 +135,14 @@ export default function CsConsole({ presenter }: { presenter: boolean }) {
           <div key={h.restru_id} className="session-item" style={{ borderLeft: "3px solid #e0a800" }}>
             <div><b>{h.restru_id}</b> · {h.mitra_id} ({h.pinjaman_no})</div>
             <div className="sub">{h.reason?.slice(0, 80)}</div>
-            <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
-              <button onClick={() => decideHitl(h.restru_id, true)}>Setujui</button>
-              <button onClick={() => decideHitl(h.restru_id, false)}>Tolak</button>
-            </div>
+            {presenter ? (
+              <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+                <button onClick={() => decideHitl(h.restru_id, true)}>Setujui</button>
+                <button onClick={() => decideHitl(h.restru_id, false)}>Tolak</button>
+              </div>
+            ) : (
+              <div className="sub" style={{ opacity: 0.7, marginTop: 4 }}>Setujui/Tolak khusus mode Presenter (four-eyes)</div>
+            )}
           </div>
         ))}
         <div className="queue-heading">🔥 Antrean handoff ({queue.length})</div>
@@ -176,8 +180,19 @@ export default function CsConsole({ presenter }: { presenter: boolean }) {
               <div ref={bottomRef} />
             </div>
             <div className="cs-actions">
-              <button onClick={() => wsRef.current?.send(JSON.stringify({ type: "takeover" }))}>Ambil Alih (Takeover)</button>
-              <button onClick={() => wsRef.current?.send(JSON.stringify({ type: "release" }))}>Kembalikan ke AI</button>
+              {presenter ? (
+                <>
+                  <button onClick={() => wsRef.current?.send(JSON.stringify({ type: "takeover" }))}>Ambil Alih (Takeover)</button>
+                  <button onClick={() => wsRef.current?.send(JSON.stringify({ type: "release" }))}>Kembalikan ke AI</button>
+                </>
+              ) : (
+                <button
+                  title="Takeover/balas CS khusus mode Presenter — di sini kamu bisa reset sesi demo kamu sendiri"
+                  onClick={() => { sessionStorage.removeItem("mmk_session_id"); window.location.reload(); }}
+                >
+                  🔄 Reset sesi demo
+                </button>
+              )}
               <button onClick={() => verifyAudit(activeId).then(setAuditResult)}>🔍 Verifikasi integritas log (hash-chain+HMAC)</button>
               {presenter && (
                 <button style={{ color: "#ff6b6b" }} onClick={() => tamperDemo(activeId).then(() => window.alert("1 baris di-tamper. Klik 'Verifikasi integritas log' untuk lihat terdeteksi."))}>
@@ -185,7 +200,7 @@ export default function CsConsole({ presenter }: { presenter: boolean }) {
                 </button>
               )}
             </div>
-            {mode === "HUMAN" && (
+            {presenter && mode === "HUMAN" && (
               <div className="input-row">
                 <input value={reply} onChange={(e) => setReply(e.target.value)} onKeyDown={(e) => e.key === "Enter" && sendCsReply()} placeholder="Balas sebagai CS..." />
                 <button onClick={sendCsReply}>Kirim</button>
