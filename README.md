@@ -3,7 +3,7 @@
 > **Demo interview Senior AI Engineer.** Perusahaan **"Modal Mitra Contoh" FIKTIF**, gaya P2P micro-lending/LPBBTI berbasis kelompok (mirip model bisnis yang dipakai di sektor ini secara umum), **seluruh data 100% sintetis**. Dibangun dengan AI-assisted engineering (agent coding) sebagai demonstrasi arsitektur & cara berpikir, bukan klaim "sudah produksi". Bukan afiliasi, tidak memakai merek/logo pihak manapun.
 >
 > **Live demo:** https://modal-mitra-demo.markas-auracheck.workers.dev
-> Tab **"Live Chat"** (pilih persona Mitra/Pendana), **"Konsol CS"** (butuh token demo — lihat §Keputusan Desain K1), **"Dashboard"**.
+> Tab **"Live Chat"** (pilih persona Mitra/Pendana), **"Konsol CS"** (butuh token demo, tersimpan lokal di `.cs-token.local` project ini — lihat §7 poin K1), **"Dashboard"**.
 >
 > **Basis:** diadaptasi dari demo `sigap-nasabah` (agen layanan nasabah multifinance, live di `sigap-nasabah-demo.markas-auracheck.workers.dev`), ditulis ulang untuk domain P2P micro-lending + live chat real-time.
 
