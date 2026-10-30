@@ -106,11 +106,35 @@ const ENUM_VALUE_ALIASES: Record<string, string> = {
   keberatan: "object_automated_decision",
 };
 
+const BULAN: Record<string, number> = {
+  januari: 1, februari: 2, maret: 3, april: 4, mei: 5, juni: 6,
+  juli: 7, agustus: 8, september: 9, oktober: 10, november: 11, desember: 12,
+};
+
+/**
+ * FIX (re-test live pasca-deploy 30 Okt): sejak redaksi tanggal informal (temuan QA M9), LLM hanya
+ * melihat token "[TANGGAL_n]" -- vault me-resolve-nya balik ke teks ASLI pengguna ("12 maret 1985",
+ * "12/03/1985") yang gagal regex YYYY-MM-DD, jadi verifikasi dengan tanggal informal SELALU gagal
+ * ("argumen tidak valid"). Dinormalisasi deterministik di sini (bukan oleh LLM, yang tidak lagi
+ * melihat nilainya). Format tidak dikenal dikembalikan apa adanya -> tetap ditolak skema.
+ */
+export function normalizeBirthDate(v: string): string {
+  const t = v.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const named = t.match(/^(\d{1,2})\s+([a-z]+)\s+(\d{4})$/i);
+  if (named && BULAN[named[2].toLowerCase()]) return `${named[3]}-${pad(BULAN[named[2].toLowerCase()])}-${pad(Number(named[1]))}`;
+  const dmy = t.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
+  if (dmy) return `${dmy[3]}-${pad(Number(dmy[2]))}-${pad(Number(dmy[1]))}`;
+  return t;
+}
+
 export function normalizeToolArgs(args: Record<string, any>): Record<string, any> {
   const out: Record<string, any> = {};
   for (const [k, v] of Object.entries(args ?? {})) {
     const key = FIELD_ALIASES[k] ?? k;
     out[key] = typeof v === "string" && ENUM_VALUE_ALIASES[v.toLowerCase()] ? ENUM_VALUE_ALIASES[v.toLowerCase()] : v;
+    if (key === "birth_date" && typeof out[key] === "string") out[key] = normalizeBirthDate(out[key]);
   }
   return out;
 }

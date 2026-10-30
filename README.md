@@ -311,7 +311,11 @@ Temuan QA: commit yang menambah kolom DB (`sessions_index.source`, `restructurin
 2. **Migrasi D1 idempotent** — cek `pragma_table_info` dulu, `ALTER TABLE ... ADD COLUMN` HANYA kalau kolom belum ada (aman di-rerun berkali-kali, tidak error "duplicate column").
 3. **Deploy** — `npm run deploy` (build UI + `wrangler deploy`).
 4. **Reseed data sintetis** — `npm run seed:remote`. **Aman**: `data/synthetic/seed.sql` hanya `DELETE`+`INSERT` ulang `majelis/mitra/pinjaman/angsuran/pendana/pendanaan/kb_documents` (data referensi/sintetis), TIDAK PERNAH menyentuh `sessions_index`/`audit_log`/`tickets`/`dsr_requests`/`restructuring_requests` — sesi chat live & approval HITL yang sedang berjalan tidak hilang.
-5. **Purge sesi eval** — `DELETE FROM sessions_index WHERE source = 'eval'`, supaya antrean CS live tidak langsung tercemar sisa eval run sebelumnya.
+5. **Purge sesi eval** — `DELETE FROM sessions_index WHERE source = 'eval'`, supaya antrean CS live tidak langsung tercemar sisa eval run sebelumnya. Sesi script lama (dibuat SEBELUM kolom `source` ada, jadi default `'live'`) ditandai `eval` dulu: semua id selain `sess-*` (UI hanya membuat `sess-*`).
+
+**Akun Cloudflare:** OAuth `wrangler login` punya 3 akun; demo ada di **Markas Auracheck**. Jalankan dengan `CLOUDFLARE_ACCOUNT_ID=0becbcb881f57d6eab013b8223cd5503 npm run deploy:all` supaya tidak salah akun (wrangler.toml tidak menyimpan `account_id`).
+
+**Reset antrean HITL sebelum demo:** `npm run demo:reset-restru` menutup (status `rejected` + catatan di `record_versions`) semua permintaan restrukturisasi aktif. Wajib setelah uji/eval: restrukturisasi idempoten per mitra, jadi selama Sri Wahyuni (MIT-0001) masih punya permintaan aktif dari uji sebelumnya, alur demo "ajukan keringanan → Setujui di Konsol CS" TIDAK membuat permintaan baru.
 
 ```bash
 npm run deploy:all

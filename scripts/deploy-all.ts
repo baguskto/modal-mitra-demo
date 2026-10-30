@@ -74,6 +74,10 @@ function main() {
   run("npm run seed:remote");
 
   console.log("\n=== 5/5: Purge sesi eval dari antrean live (temuan QA #4/#8) ===");
+  // Sesi script lama (eval-/latency-/verify-/smoke-/rag10q-/...) dibuat SEBELUM kolom `source` ada,
+  // jadi ALTER memberi default 'live'. UI hanya membuat id `sess-*` (ui/src/App.tsx), sehingga
+  // semua id lain pasti berasal dari script -> tandai 'eval' dulu baru dipurge.
+  run(`npx wrangler d1 execute modal_mitra_db --remote --command "UPDATE sessions_index SET source = 'eval' WHERE session_id NOT LIKE 'sess-%'"`);
   run(`npx wrangler d1 execute modal_mitra_db --remote --command "DELETE FROM sessions_index WHERE source = 'eval'"`);
 
   console.log(

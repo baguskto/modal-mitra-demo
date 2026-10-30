@@ -61,6 +61,7 @@ function attackLayer(meta: any): { layer: string; caught: boolean } {
   if (g === "llama_guard") return { layer: "Guard In · Llama Guard", caught: true };
   if (g === "tool_policy") return { layer: "Guard In · tool policy (integritas data)", caught: true };
   if (g === "scope") return { layer: "Guard In · scope", caught: true };
+  if (g === "privacy_exfil") return { layer: "Guard In · privasi (PII pihak lain)", caught: true };
   if (g === "privasi_antar_majelis") return { layer: "Guard Out · privasi antar-majelis", caught: true };
   if (g === "sitasi_tidak_grounded") return { layer: "Guard Out · groundedness", caught: true };
   if (g) return { layer: `Guard Out · ${g}`, caught: true };
@@ -205,6 +206,11 @@ export default function ChatPanel({
   function sendRedTeamAttack(label: string, text: string) {
     setShowXray(true);
     redTeamStartRef.current = Date.now();
+    // FIX (re-test live 30 Okt): tanpa ini, effect di bawah langsung membaca data-meta balasan
+    // asisten SEBELUMNYA (sudah lengkap) -> setiap serangan diberi atribusi giliran sebelumnya
+    // (off-by-one, "1ms", ASR salah). Tandai balasan terakhir saat ini sebagai sudah diproses.
+    const prevAssistant = [...messages].reverse().find((m: any) => m.role === "assistant");
+    redTeamProcessedMsgIdRef.current = prevAssistant?.id ?? null;
     setPendingRedTeamAttack(label);
     send(text);
   }

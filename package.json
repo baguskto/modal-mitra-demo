@@ -14,6 +14,7 @@
     "gen-data": "tsx scripts/gen-data.ts",
     "chunk-kb": "tsx scripts/chunk-kb.ts",
     "seed:remote": "wrangler d1 execute modal_mitra_db --remote --file=data/synthetic/seed.sql",
+    "demo:reset-restru": "wrangler d1 execute modal_mitra_db --remote --command \"INSERT INTO record_versions (record_type, record_id, status, changed_by, note) SELECT 'restructuring_request', restru_id, 'rejected', 'system', 'demo reset: artefak uji/eval ditutup' FROM restructuring_requests WHERE status IN ('pending_cs_approval','approved_once','submitted','under_review'); UPDATE restructuring_requests SET status='rejected' WHERE status IN ('pending_cs_approval','approved_once','submitted','under_review')\"",
     "ingest:remote": "tsx scripts/run-ingest.ts",
     "eval": "tsx scripts/run-eval.ts",
     "latency": "tsx scripts/measure-latency.ts",

@@ -63,3 +63,21 @@ export function checkMemberPrivacyLeak(answerText: string, allowedIds: Set<strin
 
 export const FALLBACK_NOT_FOUND =
   "Maaf, saya tidak menemukan informasi yang pasti untuk pertanyaan ini di basis pengetahuan resmi. Agar tidak memberi informasi yang salah, saya sarankan terhubung dengan CS kami untuk konfirmasi. Mau saya alihkan ke CS?";
+
+// Ekor protokol JSON yang ditempel model di akhir prosa (lihat extractAnswerFallback di agent/graph.ts):
+// 'Baik, Bu. ...","citations":["faq#1"]}' -> { text: "Baik, Bu. ...", citations: ["faq#1"] }.
+const JSON_TAIL_RE = /"?\s*,\s*"citations"\s*:\s*(\[[^\]]*\])\s*\}?\s*$/;
+
+export function salvageJsonTail(raw: string): { text: string; citations: string[] } | null {
+  const m = raw.match(JSON_TAIL_RE);
+  if (!m) return null;
+  let citations: string[] = [];
+  try {
+    const arr = JSON.parse(m[1]);
+    if (Array.isArray(arr)) citations = arr.filter((c) => typeof c === "string");
+  } catch {}
+  let text = raw.slice(0, m.index).replace(/^\s*\{?\s*"type"\s*:\s*"final_answer"\s*,\s*"text"\s*:\s*"/, "");
+  text = text.replace(/\\n/g, "\n").replace(/\\"/g, '"').trim();
+  return { text, citations };
+}
+

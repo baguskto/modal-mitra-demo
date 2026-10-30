@@ -78,8 +78,8 @@ export default function App() {
         <button className={tab === "cs" ? "active" : ""} onClick={() => goToTab("cs")}>Konsol CS</button>
         <button className={tab === "dash" ? "active" : ""} onClick={() => goToTab("dash")}>Dashboard</button>
         <button className={tab === "learn" ? "active" : ""} onClick={() => goToTab("learn")}>Belajar</button>
-        <div style={{ marginLeft: "auto", color: "#c9d4e8", fontSize: 12, alignSelf: "center" }}>
-          Modal Mitra Contoh · demo · sesi: {sessionId}
+        <div className="tabs-meta">
+          <span className="tabs-meta-brand">Modal Mitra Contoh · demo · </span>sesi: {sessionId}
           {" "}
           <button className="new-session-btn" onClick={() => { sessionStorage.removeItem("mmk_session_id"); window.location.reload(); }}>sesi baru</button>
           {" "}

@@ -86,6 +86,7 @@ body { margin: 0; font-family: -apple-system, "Segoe UI", sans-serif; background
 .wa-input-row { display: flex; gap: 8px; padding: 10px; background: #f0f2f5; }
 .wa-input-row input { flex: 1; padding: 10px 14px; border-radius: 20px; border: none; font-size: 13.5px; }
 .wa-input-row button { padding: 10px 18px; border-radius: 20px; border: none; background: #075e54; color: white; cursor: pointer; font-weight: 600; }
+.tabs-meta { margin-left: auto; color: #c9d4e8; font-size: 12px; align-self: center; }
 .new-session-btn { background: transparent; border: 1px solid #44536f; color: #c9d4e8; border-radius: 6px; font-size: 11px; padding: 2px 6px; cursor: pointer; }
 
 @media (max-width: 600px) {
@@ -101,13 +102,23 @@ body { margin: 0; font-family: -apple-system, "Segoe UI", sans-serif; background
 @media (max-width: 480px) {
   .wa-outer { flex-direction: column; height: 100%; overflow-y: auto; }
   .wa-shell { max-width: 100%; height: auto; min-height: 60vh; }
-  .xray-panel { width: 100%; min-width: 0; max-height: 50vh; border-left: none; border-top: 1px solid #243352; }
+  .wa-outer .xray-panel { width: 100%; min-width: 0; max-height: 50vh; border-left: none; border-top: 1px solid #243352; }
   .console { flex-direction: column; height: 100%; overflow-y: auto; }
   .session-list { width: 100%; max-height: 38vh; border-right: none; border-bottom: 1px solid #eee; }
   .console-detail { min-width: 0; }
   .console-topbar { overflow-wrap: break-word; word-break: break-word; }
   .cs-actions { flex-wrap: wrap; }
   .cs-actions button { flex: 1 1 45%; min-width: 0; }
+  /* Re-test live 30 Okt (M6 masih gagal): bar tab 187px dengan tombol setinggi 151px karena blok
+     "sesi/Presenter" tidak bisa wrap dan mendorong halaman ke 442px; judul header chat lebar 0. */
+  .tabs { flex-wrap: wrap; padding: 6px 8px 0; gap: 2px; }
+  .tabs button { padding: 8px 10px; font-size: 13px; white-space: nowrap; }
+  .tabs-meta { flex-basis: 100%; order: -1; margin-left: 0; padding: 0 2px 4px; font-size: 11px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+  .tabs-meta-brand { display: none; }
+  .wa-header { flex-wrap: wrap; row-gap: 8px; }
+  .wa-header-info { flex: 1 1 calc(100% - 46px); }
+  .wa-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .wa-input-row button { padding: 10px 12px; }
 }
 
 .dashboard { padding: 24px; width: 100%; overflow-y: auto; }

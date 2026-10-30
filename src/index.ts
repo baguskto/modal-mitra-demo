@@ -284,6 +284,11 @@ app.get("/api/cs/hitl/pending", async (c) => {
   const rows = await c.env.DB.prepare(
     `SELECT restru_id, mitra_id, pinjaman_no, reason, status, first_approver, created_at FROM restructuring_requests WHERE status IN ('pending_cs_approval', 'approved_once') ORDER BY created_at ASC`,
   ).all();
+  // FIX (re-test live 30 Okt): `reason` = teks bebas pengunjung LAIN (bisa memuat no. pinjaman/cerita
+  // pribadi) -- sebelumnya terbaca publik lewat token demo. Publik hanya melihat bahwa ada antrean.
+  if (!c.get("csFull")) {
+    return c.json(rows.results.map((r: any) => ({ ...r, mitra_id: null, pinjaman_no: null, reason: "(detail khusus mode Presenter)" })));
+  }
   return c.json(rows.results);
 });
 

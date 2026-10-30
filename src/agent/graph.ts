@@ -14,16 +14,17 @@
 import { z } from "zod";
 import { StateGraph, START, END } from "@langchain/langgraph";
 
-import { redactPII, resolveTokens, resolveLeakedTokensInText } from "../guards/pii";
+import { redactPII, resolveTokens, resolveLeakedTokensInText, maskPIIForHistory } from "../guards/pii";
 import { heuristicInjectionCheck, llamaGuardCheck, wrapAsData } from "../guards/injection";
 import { checkScope } from "../guards/scope";
 import { checkDataIntegrityAbuse } from "../guards/dataIntegrity";
-import { checkOutput, checkCitationsGrounded, checkMemberPrivacyLeak, FALLBACK_NOT_FOUND } from "../guards/output";
+import { checkThirdPartyPiiRequest } from "../guards/privacy";
+import { checkOutput, checkCitationsGrounded, checkMemberPrivacyLeak, salvageJsonTail, FALLBACK_NOT_FOUND } from "../guards/output";
 import { classifyIntent, detectHitl, type Intent, type Persona } from "./router";
 import { retrieve, formatChunksAsContext } from "./rag";
 import { buildSystemPrompt, buildUserTurn, buildToolResultTurn } from "./prompts";
 import { callChatModel, type ChatMessage } from "./llm";
-import { TOOL_REGISTRY, normalizeToolArgs, type ToolName } from "../tools/schemas";
+import { TOOL_REGISTRY, normalizeToolArgs, normalizeBirthDate, type ToolName } from "../tools/schemas";
 import { executeTool } from "../tools/execute";
 import { appendAuditLog } from "../obs/audit";
 import type { LangfuseTrace } from "../obs/langfuse";
@@ -146,18 +147,26 @@ function safeParseAgentJson(text: string): { type: string; text?: string; citati
 // dulu (lebih permisif dari JSON.parse ketat); kalau TETAP terlihat seperti JSON protokol internal
 // (ada kurung kurawal + field "type"/"citations"/"tool"), JANGAN PERNAH tampilkan mentah --
 // fallback ke pesan aman standar.
-function extractAnswerFallback(raw: string): string {
-  if (!raw) return FALLBACK_NOT_FOUND;
+// FIX (re-test live pasca-deploy 30 Okt, M3 masih 7/21 balasan): sejak histori dikirim ke LLM
+// (fix B3), model sering MENGHILANGKAN prefiks protokol dan menulis prosa langsung, lalu menutup
+// dengan ekor JSON: 'Baik, Bu. ...","citations":["faq#1"]}'. Tidak ada "{" -> safeParseAgentJson
+// null, tidak ada "text": -> regex di bawah tidak cocok -> teks MENTAH lolos ke bubble. Ekor ini
+// dipotong & sitasinya diselamatkan (salvageJsonTail, guards/output.ts).
+function extractAnswerFallback(raw: string): { text: string; citations: string[] } {
+  if (!raw) return { text: FALLBACK_NOT_FOUND, citations: [] };
   const m = raw.match(/"text"\s*:\s*"((?:[^"\\]|\\.)*)"/);
   if (m) {
+    const cit = salvageJsonTail(raw)?.citations ?? [];
     try {
-      return JSON.parse(`"${m[1]}"`) || FALLBACK_NOT_FOUND;
+      return { text: JSON.parse(`"${m[1]}"`) || FALLBACK_NOT_FOUND, citations: cit };
     } catch {
-      return m[1] || FALLBACK_NOT_FOUND;
+      return { text: m[1] || FALLBACK_NOT_FOUND, citations: cit };
     }
   }
-  if (/^\s*\{[\s\S]*"(type|citations|tool)"\s*:/.test(raw)) return FALLBACK_NOT_FOUND;
-  return raw;
+  const tail = salvageJsonTail(raw);
+  if (tail && tail.text) return tail;
+  if (/^\s*\{[\s\S]*"(type|citations|tool)"\s*:/.test(raw)) return { text: FALLBACK_NOT_FOUND, citations: [] };
+  return { text: raw, citations: [] };
 }
 
 // FIX (temuan QA M2): heuristik kata kunci penolakan Bahasa Indonesia -- BUKAN deteksi sempurna
@@ -206,6 +215,17 @@ async function nodeGuardIn(state: State, config: any): Promise<Partial<State>> {
     };
   }
 
+  const piiExfil = checkThirdPartyPiiRequest(state.userText);
+  if (piiExfil.blocked) {
+    await appendAuditLog(env.DB, state.sessionId, "system", "guard_block", { layer: "privacy_exfil", reason: piiExfil.reason });
+    span?.end({ blocked: true, layer: "privacy_exfil" }, "WARNING");
+    return {
+      blockedByGuard: "privacy_exfil",
+      instantDelivery: true,
+      finalText: "Maaf, saya tidak bisa memberikan data pribadi orang lain (NIK, nomor HP, alamat, atau rekening), apa pun keperluannya. Setiap mitra hanya bisa mengakses datanya sendiri setelah verifikasi. Untuk kebutuhan internal/audit, silakan ajukan lewat jalur resmi tim yang berwenang.",
+    };
+  }
+
   const { redacted, matches } = redactPII(state.userText);
   if (matches.length > 0) {
     await appendAuditLog(env.DB, state.sessionId, "system", "pii_redacted", { count: matches.length, types: matches.map((m) => m.type) });
@@ -247,7 +267,8 @@ async function nodeVerifyIdentity(state: State, config: any): Promise<Partial<St
   const { env, trace }: RunConfigurable = config.configurable;
   const span = trace?.span("verify_identity", {});
   if (state.verifiedActorId) {
-    span?.end({ skipped: true, reason: "already_verified" });
+    // X-Ray: giliran setelah verifikasi tetap menampilkan "terverifikasi" (bukan "belum/skip").
+    span?.end({ skipped: true, reason: "already_verified", verified: true });
     return {};
   }
   const intent = classifyIntent(state.userText, state.persona as Persona);
@@ -256,12 +277,15 @@ async function nodeVerifyIdentity(state: State, config: any): Promise<Partial<St
     return {};
   }
   const pinjamanMatch = state.userText.match(/\bMMK-\d{6}\b/i);
-  const birthMatch = state.userText.match(/\b\d{4}-\d{2}-\d{2}\b/);
+  const birthMatch =
+    state.userText.match(/\b\d{4}-\d{2}-\d{2}\b/) ??
+    state.userText.match(/\b\d{1,2}[\/-]\d{1,2}[\/-]\d{4}\b/) ??
+    state.userText.match(/\b\d{1,2}\s+(januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember)\s+\d{4}\b/i);
   if (!pinjamanMatch || !birthMatch) {
     span?.end({ skipped: true, reason: "no_pattern" });
     return {};
   }
-  const verifyResult = await executeTool(env.DB, "verify_mitra", { pinjaman_no: pinjamanMatch[0].toUpperCase(), birth_date: birthMatch[0] }, { verifiedActorId: null, actorType: null, sessionId: state.sessionId });
+  const verifyResult = await executeTool(env.DB, "verify_mitra", { pinjaman_no: pinjamanMatch[0].toUpperCase(), birth_date: normalizeBirthDate(birthMatch[0]) }, { verifiedActorId: null, actorType: null, sessionId: state.sessionId });
   if (verifyResult.ok && verifyResult.data?.verified) {
     await appendAuditLog(env.DB, state.sessionId, "system", "tool_call", { tool: "verify_mitra", ok: true, auto: true });
     const actorId = String(verifyResult.data.actor_id);
@@ -401,7 +425,13 @@ async function nodeTools(state: State, config: any): Promise<Partial<State>> {
   // perlu diulang-ulang token redaksi/RAG untuk giliran lama, cukup teks percakapan apa adanya).
   const messages: ChatMessage[] = [
     { role: "system", content: buildSystemPrompt(state.persona as Persona, verifiedActorId, state.styleInstruction) },
-    ...state.history.slice(-10).map((h): ChatMessage => ({ role: h.role, content: h.text })),
+    // Histori di-mask (PII tidak pernah terkirim mentah ke LLM) & giliran asisten ditulis ulang dalam
+    // format protokol JSON -- prosa polos di histori membuat model ikut menjawab prosa + ekor JSON.
+    ...state.history.slice(-10).map((h): ChatMessage =>
+      h.role === "user"
+        ? { role: "user", content: maskPIIForHistory(h.text, true) }
+        : { role: "assistant", content: JSON.stringify({ type: "final_answer", text: maskPIIForHistory(h.text, false), citations: [] }) },
+    ),
     { role: "user", content: buildUserTurn(state.redacted, wrapAsData("konteks_rag", ragContext)) },
   ];
 
@@ -418,7 +448,7 @@ async function nodeTools(state: State, config: any): Promise<Partial<State>> {
 
     const parsed = safeParseAgentJson(llmRes.text);
     if (!parsed) {
-      finalText = extractAnswerFallback(llmRes.text);
+      ({ text: finalText, citations } = extractAnswerFallback(llmRes.text));
       break;
     }
     if (parsed.type === "final_answer") {
@@ -493,7 +523,7 @@ async function nodeTools(state: State, config: any): Promise<Partial<State>> {
       continue;
     }
 
-    finalText = extractAnswerFallback(llmRes.text);
+    ({ text: finalText, citations } = extractAnswerFallback(llmRes.text));
     break;
   }
 
@@ -529,6 +559,11 @@ async function nodeGuardOut(state: State, config: any): Promise<Partial<State>> 
   // (apa pun sebabnya), jangan pernah lanjut ke pengguna seperti itu.
   if (/^\s*\{[\s\S]*"(type|citations|tool)"\s*:/.test(finalText)) finalText = FALLBACK_NOT_FOUND;
   let citations = state.citations;
+  const tail = salvageJsonTail(finalText);
+  if (tail) {
+    finalText = tail.text || FALLBACK_NOT_FOUND;
+    if (citations.length === 0) citations = tail.citations;
+  }
   let blockedByGuard: string | undefined;
 
   const citationRelevant = state.usedRag && state.intent !== "akun";

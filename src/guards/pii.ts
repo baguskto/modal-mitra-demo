@@ -52,6 +52,23 @@ export function redactPII(text: string): { redacted: string; matches: PiiMatch[]
 }
 
 /**
+ * FIX (re-test live pasca-deploy 30 Okt): histori percakapan (fix B3) dikirim ke LLM sebagai teks
+ * MENTAH -- nomor pinjaman/tanggal lahir yang pernah diketik user ikut terkirim ke LLM di giliran
+ * berikutnya, melanggar prinsip "LLM tidak pernah melihat nilai asli". Histori di-mask dengan token
+ * ber-indeks 0 ("[PINJAMAN_0]"): tidak pernah ada di vault (counter mulai 1), jadi tidak bisa
+ * di-resolve ke nilai asli, dan kalau LLM menyalinnya ke jawaban, resolveLeakedTokensInText
+ * menghapusnya. `maskDates=false` untuk balasan asisten (jatuh tempo/jadwal majelis tetap terbaca).
+ */
+export function maskPIIForHistory(text: string, maskDates: boolean): string {
+  let out = text;
+  for (const { type, re } of PATTERNS) {
+    if (type === "TANGGAL" && !maskDates) continue;
+    out = out.replace(re, `[${type}_0]`);
+  }
+  return out;
+}
+
+/**
  * Temuan review: LLM kadang MENYALIN token redaksi ("[PINJAMAN_1]") langsung ke jawaban akhir
  * alih-alih nilai asli (model melihat token tersebut di konteks giliran ini). Jawaban ke pengguna
  * TIDAK PERNAH boleh menampilkan token mentah — ganti balik ke nilai asli dari vault giliran ini
