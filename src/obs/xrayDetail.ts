@@ -5,6 +5,7 @@
 //  - hasil tool hanya ringkasan hitungan/status — tidak pernah baris data, nama, atau ID pihak lain;
 //  - tidak ada teks system prompt (hanya nama teknik), tidak ada teks jawaban LLM mentah.
 import { redactPII } from "../guards/pii";
+import { PROMPT_LEAK, normalizeForGuard } from "../guards/streamGuard";
 
 export interface XrayTechnique {
   label: string;
@@ -71,7 +72,10 @@ export const TECH = {
 export function maskArgs(args: unknown): string {
   if (args == null) return "";
   const json = typeof args === "string" ? args : JSON.stringify(args);
-  return redactPII(json).redacted.slice(0, 120);
+  // Redaksi DULU baru potong (review Opus P2) + buang argumen yang mirip instruksi internal.
+  const red = redactPII(json).redacted;
+  if (PROMPT_LEAK.test(normalizeForGuard(red))) return "(disembunyikan: mirip instruksi internal)";
+  return red.slice(0, 120);
 }
 
 /** Ringkasan hasil tool untuk X-Ray — hanya hitungan/status, tidak pernah baris data. */
@@ -101,8 +105,14 @@ export function summarizeToolResult(tool: string, result: { ok: boolean; data?: 
   }
 }
 
-/** Thought ReAct: disanitasi (PII -> token), dipotong, tanpa token redaksi mentah. */
+/** Thought ReAct: disanitasi (PII -> token), dipotong; dibuang bila mirip kebocoran system prompt (review Opus P1). */
 export function sanitizeThought(t: unknown): string | undefined {
   if (typeof t !== "string" || !t.trim()) return undefined;
+  if (PROMPT_LEAK.test(normalizeForGuard(t))) return "(disembunyikan: mirip instruksi internal)";
   return redactPII(t).redacted.replace(/\s+/g, " ").slice(0, 120);
+}
+
+/** Nama tool untuk X-Ray: hanya nama yang memang terdaftar; selain itu label tetap (review Opus P1). */
+export function safeToolName(name: unknown, registry: Record<string, unknown>): string {
+  return typeof name === "string" && Object.prototype.hasOwnProperty.call(registry, name) ? name : "(tool tidak dikenal)";
 }

@@ -4,6 +4,7 @@ import { useAgentChat } from "@cloudflare/ai-chat/react";
 import { VoiceRecorderButton } from "./extras/VoiceRecorder";
 import { renderInlineMarkdown } from "./markdown";
 import type { DemoLink } from "./learn/types";
+import XrayPanel, { type XrayEv } from "./XrayPanel";
 
 type Persona = "mitra" | "pendana";
 
@@ -19,37 +20,15 @@ const QUICK_FILL: Record<Persona, { label: string; text: string }[]> = {
   ],
 };
 
+// feat/latency-xray: guard streaming bisa mengganti bubble yang sudah sebagian tampil (part
+// `data-guard` action "replace", lihat src/guards/streamGuard.ts) -> teks pengganti yang ditampilkan.
 function textOfParts(parts: any[]): string {
+  const replaced = (parts ?? []).find((p) => p.type === "data-guard" && p.data?.action === "replace");
+  if (replaced) return String(replaced.data.text ?? "");
   return (parts ?? []).filter((p) => p.type === "text").map((p) => p.text).join("");
 }
 function metaOfParts(parts: any[]): any {
   return (parts ?? []).find((p) => p.type === "data-meta")?.data ?? null;
-}
-
-// X-Ray mode: node graph LangGraph "menyala" real-time dari event broadcast server (skema stabil
-// `XrayEvent` — lihat src/obs/langfuse.ts & README §"Untuk halaman visual"). Tanpa teks mentah di
-// event ini (aman mode Publik) -> hanya nama node, status, dan field ringkas (intent/blocked/steps).
-const GRAPH_NODES = ["guard_in", "verify_identity", "route_intent", "tools", "guard_out", "respond"] as const;
-const NODE_LABEL: Record<string, string> = {
-  guard_in: "1· Guard In",
-  verify_identity: "2· Verify",
-  route_intent: "3· Route Intent",
-  tools: "4· Tools (RAG+ReAct)",
-  guard_out: "5· Guard Out",
-  respond: "6· Respond",
-};
-
-function summarizeXrayData(node: string, data: any): string {
-  if (!data) return "";
-  if (data.blocked) return `🚫 ${data.layer ?? data.reason ?? "diblokir"}`;
-  if (node === "route_intent") return `intent: ${data.intent ?? "-"}${data.handoff ? " · HANDOFF" : ""}`;
-  // FIX (temuan QA MAJOR a/M1/M2): tandai juga kalau LLM sendiri menolak (tidak ada guard yang
-  // blokir, tapi jawabannya adalah penolakan -- lihat state.modelRefused di graph.ts), supaya
-  // panel Tools tidak diam-diam tampil "selesai" hijau seolah tidak ada apa pun yang terjadi.
-  if (node === "tools") return `${data.refused ? "🛡️ LLM menolak (policy) · " : ""}${data.steps ?? 0} langkah · ${data.model ?? ""}`;
-  if (node === "respond") return `${data.totalMs ?? "-"}ms`;
-  if (node === "verify_identity") return data.verified ? "terverifikasi" : "belum/skip";
-  return "selesai";
 }
 
 // FIX (temuan QA M2): atribusi JUJUR lapisan mana yang menangkap/menolak sebuah giliran, dipakai
@@ -64,6 +43,10 @@ function attackLayer(meta: any): { layer: string; caught: boolean } {
   if (g === "privacy_exfil") return { layer: "Guard In · privasi (PII pihak lain)", caught: true };
   if (g === "privasi_antar_majelis") return { layer: "Guard Out · privasi antar-majelis", caught: true };
   if (g === "sitasi_tidak_grounded") return { layer: "Guard Out · groundedness", caught: true };
+  if (g === "janji_finansial") return { layer: "Guard Out · larangan janji finansial (streaming)", caught: true };
+  if (g === "pii_output") return { layer: "Guard Out · scan PII output (streaming)", caught: true };
+  if (g === "prompt_leak") return { layer: "Guard Out · kebocoran system prompt (streaming)", caught: true };
+  if (g === "sitasi_wajib") return { layer: "Guard Out · sitasi wajib", caught: true };
   if (g) return { layer: `Guard Out · ${g}`, caught: true };
   if (meta?.modelRefused) return { layer: "LLM (policy refusal, bukan guard deterministik)", caught: true };
   return { layer: "TIDAK TERTANGKAP", caught: false };
@@ -111,8 +94,10 @@ export default function ChatPanel({
   const [handoffSummary, setHandoffSummary] = useState<string | null>(null);
   const [showXray, setShowXray] = useState(false);
   const [showRedTeam, setShowRedTeam] = useState(false);
-  const [pipeline, setPipeline] = useState<Record<string, { phase: string; data: any; durationMs?: number }>>({});
-  const [xrayLog, setXrayLog] = useState<{ node: string; phase: string; data: any; ts: string }[]>([]);
+  // Event X-Ray giliran TERAKHIR (live). Giliran baru dimulai di event pertama (lang_detect/guard_in
+  // "start") setelah giliran sebelumnya selesai (respond "end").
+  const [turnEvents, setTurnEvents] = useState<XrayEv[]>([]);
+  const turnDoneRef = useRef(true);
   const [demoHint, setDemoHint] = useState<string | null>(null);
   const [redTeamResults, setRedTeamResults] = useState<{ label: string; layer: string; caught: boolean; ms: number }[]>([]);
   const [pendingRedTeamAttack, setPendingRedTeamAttack] = useState<string | null>(null);
@@ -147,10 +132,11 @@ export default function ChatPanel({
       } else if (msg.type === "typing" && msg.role === "cs") {
         setHumanTyping(!!msg.isTyping);
       } else if (msg.type === "xray_event") {
-        const ev = msg.event;
-        if (ev.node === "guard_in" && ev.phase === "start") setPipeline({}); // giliran baru -> reset graph
-        setPipeline((p) => ({ ...p, [ev.node]: { phase: ev.phase, data: ev.data, durationMs: ev.durationMs } }));
-        setXrayLog((log) => [...log.slice(-59), { node: ev.node, phase: ev.phase, data: ev.data, ts: ev.ts }]);
+        const ev = msg.event as XrayEv;
+        const fresh = turnDoneRef.current && ev.phase === "start";
+        if (fresh) turnDoneRef.current = false;
+        if (ev.node === "respond" && ev.phase === "end") turnDoneRef.current = true;
+        setTurnEvents((cur) => (fresh ? [ev] : [...cur.slice(-199), ev]));
       }
     },
   });
@@ -230,9 +216,14 @@ export default function ChatPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages, pendingRedTeamAttack]);
 
-  const aiTyping = status === "submitted" || status === "streaming";
+  const lastMsg: any = messages[messages.length - 1];
+  const streamingVisible = status === "streaming" && lastMsg?.role === "assistant" && textOfParts(lastMsg.parts).length > 0;
+  // Titik "mengetik" hanya sampai kalimat pertama tampil — setelah itu teks streaming itu sendiri indikatornya.
+  const aiTyping = (status === "submitted" || status === "streaming") && !streamingVisible;
   const lastAssistant = [...messages].reverse().find((m: any) => m.role === "assistant");
   const lastMeta = lastAssistant ? metaOfParts((lastAssistant as any).parts) : null;
+  // Live bila ada; kalau tidak (mis. halaman dimuat ulang), putar ulang metadata.xray yang tersimpan.
+  const xrayEvents: XrayEv[] = turnEvents.length > 0 ? turnEvents : (lastMeta?.xray ?? []);
 
   return (
     <div className="wa-outer">
@@ -343,41 +334,7 @@ export default function ChatPanel({
         <VoiceRecorderButton onTranscribed={(text) => send(text)} />
       </div>
     </div>
-    {showXray && (
-      <div className="xray-panel">
-        <div className="xray-title">🩻 X-Ray — alur LangGraph real-time</div>
-        <div className="xray-pipeline">
-          {GRAPH_NODES.map((node) => {
-            const st = pipeline[node];
-            const status = !st ? "idle" : st.data?.blocked ? "blocked" : st.phase === "start" ? "running" : "done";
-            return (
-              <div key={node} className={`xray-node ${status}`}>
-                <div className="xray-node-label">{NODE_LABEL[node]}</div>
-                <div className="xray-node-detail">{st ? summarizeXrayData(node, st.data) : "menunggu..."}</div>
-              </div>
-            );
-          })}
-        </div>
-        {lastMeta && (
-          <div className="xray-meta">
-            <div>Model: {lastMeta.modelUsed}</div>
-            <div>Intent: {lastMeta.intent} {lastMeta.blockedByGuard && `· diblokir: ${lastMeta.blockedByGuard}`}</div>
-            <div>Latensi: first-token {lastMeta.timing?.firstTokenMs}ms · total {lastMeta.timing?.totalMs}ms</div>
-            {presenter && lastMeta.traceId && <div className="xray-trace">Langfuse trace: <code>{lastMeta.traceId}</code></div>}
-          </div>
-        )}
-        <div className="xray-title" style={{ marginTop: 10 }}>Log event ({xrayLog.length})</div>
-        <div className="xray-log">
-          {xrayLog.slice().reverse().map((e, i) => (
-            <div key={i} className="xray-log-row">
-              <span className="xray-log-node">{e.node}</span>
-              <span className="xray-log-phase">{e.phase}</span>
-              <span className="xray-log-data">{summarizeXrayData(e.node, e.data)}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    )}
+    {showXray && <XrayPanel events={xrayEvents} meta={lastMeta} presenter={presenter} />}
     </div>
   );
 }

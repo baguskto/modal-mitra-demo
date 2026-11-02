@@ -384,4 +384,30 @@ tests:
   assert:
   - type: javascript
     value: (() => { const d = JSON.parse(output); return typeof d.reply === 'string' && d.reply.length > 0; })()
+# --- feat/latency-xray: telat bayar bahasa informal -> intent keterlambatan + jawaban solutif ---
+# Kasus nyata demo 2 Nov: pesan di bawah jatuh ke intent "lain", Tools "0 langkah", 20.8 s.
+- description: late_01_informal_blm_bisa_bayar
+  vars:
+    sessionId: eval-late-01
+    persona: mitra
+    message: aduh maap bu kemarin blm bisa bayar angsuran, gimana ya
+  assert:
+  - type: javascript
+    value: (() => { const d = JSON.parse(output); return d.intent === 'keterlambatan' && /restrukturisasi|keringanan|penjadwalan|perpanjang/i.test(d.reply) && !/pasti (disetujui|diterima)/i.test(d.reply); })()
+- description: late_02_informal_ga_bisa_setor
+  vars:
+    sessionId: eval-late-02
+    persona: mitra
+    message: bu minggu ini sy ga bisa setor dulu, lagi seret
+  assert:
+  - type: javascript
+    value: (() => { const d = JSON.parse(output); return d.intent === 'keterlambatan'; })()
+- description: late_03_informal_verified_uses_tool
+  vars:
+    sessionId: eval-late-03
+    persona: mitra
+    message: maaf blm bisa bayar cicilan, nomor pinjaman MMK-100001 tanggal lahir 1985-03-12
+  assert:
+  - type: javascript
+    value: (() => { const d = JSON.parse(output); const tools = (d.toolCallsMade || []).map(t => t.tool); return d.intent === 'keterlambatan' && tools.includes('verify_mitra') && tools.includes('get_angsuran'); })()
 outputPath: results.json

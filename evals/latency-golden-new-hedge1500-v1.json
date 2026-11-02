@@ -1,0 +1,497 @@
+{
+  "impl": "new",
+  "hedgeModel": "deepseek-v4-1-flash",
+  "measuredAt": "2026-11-02T04:46:26.172Z",
+  "env": {
+    "D1_LATENCY_MS": 8,
+    "AI_GUARD_SIM_MS": 400,
+    "workersAi": "stub (tidak terjangkau dari Node)",
+    "retrieval": "BM25 lokal (kedua implementasi)"
+  },
+  "n": 20,
+  "firstTokenMs": {
+    "p50": 4768,
+    "p95": 6352,
+    "min": 3975,
+    "max": 10632
+  },
+  "totalMs": {
+    "p50": 5501,
+    "p95": 7906,
+    "min": 4676,
+    "max": 13591
+  },
+  "phaseP50": {
+    "guard_in": 402,
+    "verify_identity": 0,
+    "route_intent": 0,
+    "tools": 5008,
+    "guard_out": 5010,
+    "respond": 33
+  },
+  "intentAccuracy": "20/20",
+  "rows": [
+    {
+      "id": "g01_biaya_jasa",
+      "rep": 0,
+      "intent": "info",
+      "intentOk": true,
+      "model": "kenari:deepseek-v4-1-flash",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 4345,
+      "totalMs": 4882,
+      "wallMs": 4895,
+      "streamedChunks": 3,
+      "phases": {
+        "guard_in": 403,
+        "verify_identity": 1,
+        "route_intent": 1,
+        "tools": 4411,
+        "guard_out": 4418,
+        "respond": 31
+      },
+      "answer": "Biaya jasa (bunga) pinjaman modal usaha mikro di Modal Mitra Contoh bersifat efektif, berkisar 10%–14% per tahun, tergantung jenis produk da"
+    },
+    {
+      "id": "g02_telat_informal",
+      "rep": 0,
+      "intent": "keterlambatan",
+      "intentOk": true,
+      "model": "kenari:deepseek-v4-1-flash",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 4281,
+      "totalMs": 4765,
+      "wallMs": 4768,
+      "streamedChunks": 3,
+      "phases": {
+        "guard_in": 402,
+        "verify_identity": 1,
+        "route_intent": 1,
+        "tools": 4313,
+        "guard_out": 4317,
+        "respond": 27
+      },
+      "answer": "Tidak apa-apa, Bu, terima kasih sudah jujur memberi tahu. Kalau angsuran kemarin belum bisa dibayar, Ibu bisa diskusikan opsi penjadwalan ul"
+    },
+    {
+      "id": "g03_verify_angsuran",
+      "rep": 0,
+      "intent": "akun",
+      "intentOk": true,
+      "model": "kenari:deepseek-v4-1-flash",
+      "blockedByGuard": null,
+      "tools": [
+        "verify_mitra",
+        "get_angsuran"
+      ],
+      "firstTokenMs": 4374,
+      "totalMs": 5212,
+      "wallMs": 5214,
+      "streamedChunks": 4,
+      "phases": {
+        "guard_in": 401,
+        "verify_identity": 20,
+        "route_intent": 0,
+        "tools": 4732,
+        "guard_out": 4699,
+        "respond": 33
+      },
+      "answer": "Terima kasih sudah menyampaikan data verifikasinya, Bu. Saya sudah cek dan identitas Ibu berhasil terverifikasi, jadi saya bisa bantu tampil"
+    },
+    {
+      "id": "g04_majelis_verify",
+      "rep": 0,
+      "intent": "akun",
+      "intentOk": true,
+      "model": "kenari:deepseek-v4-1-flash",
+      "blockedByGuard": null,
+      "tools": [
+        "verify_mitra",
+        "get_majelis_info"
+      ],
+      "firstTokenMs": 4394,
+      "totalMs": 4925,
+      "wallMs": 4929,
+      "streamedChunks": 6,
+      "phases": {
+        "guard_in": 402,
+        "verify_identity": 21,
+        "route_intent": 0,
+        "tools": 4448,
+        "guard_out": 4413,
+        "respond": 33
+      },
+      "answer": "Terima kasih sudah menghubungi kami. Saya cek dulu identitas Anda ya, mohon tunggu sebentar. Berdasarkan data yang terverifikasi, pertemuan"
+    },
+    {
+      "id": "g05_pendana_portofolio",
+      "rep": 0,
+      "intent": "akun",
+      "intentOk": true,
+      "model": "kenari:deepseek-v4-1-flash",
+      "blockedByGuard": null,
+      "tools": [
+        "verify_pendana",
+        "get_portofolio"
+      ],
+      "firstTokenMs": 5129,
+      "totalMs": 5753,
+      "wallMs": 5756,
+      "streamedChunks": 4,
+      "phases": {
+        "guard_in": 401,
+        "verify_identity": 20,
+        "route_intent": 0,
+        "tools": 5284,
+        "guard_out": 5247,
+        "respond": 35
+      },
+      "answer": "Identitas Anda sudah terverifikasi, jadi berikut ringkasan portofolio pendanaan Anda: total dana disalurkan Rp26.000.000 pada 4 pendanaan — "
+    },
+    {
+      "id": "g06_imbal_hasil",
+      "rep": 0,
+      "intent": "info",
+      "intentOk": true,
+      "model": "kenari:deepseek-v4-1-flash",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 4309,
+      "totalMs": 4789,
+      "wallMs": 4792,
+      "streamedChunks": 5,
+      "phases": {
+        "guard_in": 402,
+        "verify_identity": 0,
+        "route_intent": 0,
+        "tools": 4334,
+        "guard_out": 4339,
+        "respond": 34
+      },
+      "answer": "Tidak, imbal hasil pendanaan di sini tidak dijamin. Estimasi imbal hasil bersifat estimasi berbasis data historis risk tier, bukan jaminan, "
+    },
+    {
+      "id": "g07_syarat_pengajuan",
+      "rep": 0,
+      "intent": "pengajuan",
+      "intentOk": true,
+      "model": "kenari:deepseek-v4-1-flash",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 4768,
+      "totalMs": 5510,
+      "wallMs": 5512,
+      "streamedChunks": 5,
+      "phases": {
+        "guard_in": 403,
+        "verify_identity": 0,
+        "route_intent": 0,
+        "tools": 5058,
+        "guard_out": 5061,
+        "respond": 31
+      },
+      "answer": "Terima kasih sudah bertanya, Bu. Untuk pengajuan pinjaman baru, prosesnya selalu melalui petugas lapangan dan persetujuan majelis, bukan kep"
+    },
+    {
+      "id": "g08_sla_pengaduan",
+      "rep": 0,
+      "intent": "pengaduan",
+      "intentOk": true,
+      "model": "kenari:deepseek-v4-1-flash",
+      "blockedByGuard": null,
+      "tools": [
+        "create_complaint_ticket"
+      ],
+      "firstTokenMs": 3975,
+      "totalMs": 4676,
+      "wallMs": 4680,
+      "streamedChunks": 5,
+      "phases": {
+        "guard_in": 402,
+        "verify_identity": 0,
+        "route_intent": 43,
+        "tools": 4179,
+        "guard_out": 4184,
+        "respond": 31
+      },
+      "answer": "Terima kasih sudah bertanya, Bu. Pengaduan Ibu sudah kami catat dengan nomor tiket TCK-MVYRZ657 dan tenggat penanganan 16 November 2026. Unt"
+    },
+    {
+      "id": "g09_keringanan_janji",
+      "rep": 0,
+      "intent": "keterlambatan",
+      "intentOk": true,
+      "model": "kenari:deepseek-v4-1-flash",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 4208,
+      "totalMs": 4833,
+      "wallMs": 4836,
+      "streamedChunks": 4,
+      "phases": {
+        "guard_in": 401,
+        "verify_identity": 0,
+        "route_intent": 0,
+        "tools": 4385,
+        "guard_out": 4390,
+        "respond": 32
+      },
+      "answer": "Halo, terima kasih sudah bertanya. Saya perlu sampaikan dengan jujur bahwa saya tidak bisa memastikan atau menjanjikan pengajuan keringanan "
+    },
+    {
+      "id": "g10_sapaan_umum",
+      "rep": 0,
+      "intent": "lain",
+      "intentOk": true,
+      "model": "kenari:deepseek-v4-1-flash",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 4694,
+      "totalMs": 5737,
+      "wallMs": 5739,
+      "streamedChunks": 6,
+      "phases": {
+        "guard_in": 402,
+        "verify_identity": 0,
+        "route_intent": 800,
+        "tools": 4484,
+        "guard_out": 4489,
+        "respond": 32
+      },
+      "answer": "Halo Bu, terima kasih sudah menghubungi kami. Untuk pinjaman modal usaha, Modal Mitra Contoh menyalurkan pembiayaan lewat kelompok tanggung "
+    },
+    {
+      "id": "g01_biaya_jasa",
+      "rep": 1,
+      "intent": "info",
+      "intentOk": true,
+      "model": "kenari:deepseek-v4-1-flash",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 4923,
+      "totalMs": 5501,
+      "wallMs": 5501,
+      "streamedChunks": 4,
+      "phases": {
+        "guard_in": 402,
+        "verify_identity": 0,
+        "route_intent": 0,
+        "tools": 5043,
+        "guard_out": 5044,
+        "respond": 38
+      },
+      "answer": "Biaya jasa (bunga) pinjaman modal usaha mikro di Modal Mitra Contoh bersifat efektif, berkisar 10%–14% per tahun, tergantung jenis produk da"
+    },
+    {
+      "id": "g02_telat_informal",
+      "rep": 1,
+      "intent": "keterlambatan",
+      "intentOk": true,
+      "model": "kenari:gpt-6-luna",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 4472,
+      "totalMs": 4940,
+      "wallMs": 4943,
+      "streamedChunks": 3,
+      "phases": {
+        "guard_in": 402,
+        "verify_identity": 0,
+        "route_intent": 0,
+        "tools": 4492,
+        "guard_out": 4496,
+        "respond": 31
+      },
+      "answer": "Nggak apa-apa, Bu. Kita bisa membicarakan opsi penjadwalan ulang atau restrukturisasi; saya bisa mencatat permintaan Ibu untuk ditinjau petu"
+    },
+    {
+      "id": "g03_verify_angsuran",
+      "rep": 1,
+      "intent": "akun",
+      "intentOk": true,
+      "model": "kenari:deepseek-v4-1-flash",
+      "blockedByGuard": null,
+      "tools": [
+        "verify_mitra",
+        "get_angsuran"
+      ],
+      "firstTokenMs": 6037,
+      "totalMs": 6645,
+      "wallMs": 6648,
+      "streamedChunks": 7,
+      "phases": {
+        "guard_in": 402,
+        "verify_identity": 21,
+        "route_intent": 0,
+        "tools": 6164,
+        "guard_out": 6133,
+        "respond": 35
+      },
+      "answer": "Terima kasih sudah menyampaikan data verifikasinya, Bu. Saya sudah cek dan identitas Ibu berhasil terverifikasi, jadi saya bisa bantu tampil"
+    },
+    {
+      "id": "g04_majelis_verify",
+      "rep": 1,
+      "intent": "akun",
+      "intentOk": true,
+      "model": "kenari:deepseek-v4-1-flash",
+      "blockedByGuard": null,
+      "tools": [
+        "verify_mitra",
+        "get_majelis_info"
+      ],
+      "firstTokenMs": 5204,
+      "totalMs": 5597,
+      "wallMs": 5599,
+      "streamedChunks": 5,
+      "phases": {
+        "guard_in": 400,
+        "verify_identity": 21,
+        "route_intent": 0,
+        "tools": 5124,
+        "guard_out": 5090,
+        "respond": 32
+      },
+      "answer": "Terima kasih sudah menghubungi kami. Pertemuan majelis Anda berikutnya dijadwalkan pada Selasa, 3 November 2026 pukul 09:00, dengan petugas "
+    },
+    {
+      "id": "g05_pendana_portofolio",
+      "rep": 1,
+      "intent": "akun",
+      "intentOk": true,
+      "model": "kenari:deepseek-v4-1-flash",
+      "blockedByGuard": null,
+      "tools": [
+        "verify_pendana",
+        "get_portofolio"
+      ],
+      "firstTokenMs": 6352,
+      "totalMs": 7906,
+      "wallMs": 7909,
+      "streamedChunks": 4,
+      "phases": {
+        "guard_in": 401,
+        "verify_identity": 20,
+        "route_intent": 0,
+        "tools": 7434,
+        "guard_out": 7401,
+        "respond": 32
+      },
+      "answer": "Portofolio pendanaan Anda (PND-0001) sudah saya tampilkan: total didanai Rp26.000.000 untuk 4 pendanaan — dua berstatus berjalan (Majelis Me"
+    },
+    {
+      "id": "g06_imbal_hasil",
+      "rep": 1,
+      "intent": "info",
+      "intentOk": true,
+      "model": "kenari:deepseek-v4-1-flash",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 5625,
+      "totalMs": 6444,
+      "wallMs": 6447,
+      "streamedChunks": 4,
+      "phases": {
+        "guard_in": 402,
+        "verify_identity": 0,
+        "route_intent": 0,
+        "tools": 5991,
+        "guard_out": 5994,
+        "respond": 34
+      },
+      "answer": "Tidak, imbal hasil pendanaan di sini tidak dijamin. Estimasi imbal hasil bersifat historis berbasis risk tier, bukan jaminan, dan pendanaan "
+    },
+    {
+      "id": "g07_syarat_pengajuan",
+      "rep": 1,
+      "intent": "pengajuan",
+      "intentOk": true,
+      "model": "kenari:gpt-6-luna",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 4906,
+      "totalMs": 5459,
+      "wallMs": 5460,
+      "streamedChunks": 3,
+      "phases": {
+        "guard_in": 400,
+        "verify_identity": 0,
+        "route_intent": 0,
+        "tools": 5008,
+        "guard_out": 5010,
+        "respond": 36
+      },
+      "answer": "Pengajuan pinjaman baru ditujukan untuk modal usaha mikro perempuan di pedesaan. Prosesnya melalui petugas lapangan dan perlu persetujuan ma"
+    },
+    {
+      "id": "g08_sla_pengaduan",
+      "rep": 1,
+      "intent": "pengaduan",
+      "intentOk": true,
+      "model": "kenari:gpt-6-luna",
+      "blockedByGuard": null,
+      "tools": [
+        "create_complaint_ticket"
+      ],
+      "firstTokenMs": 5711,
+      "totalMs": 5821,
+      "wallMs": 5824,
+      "streamedChunks": 2,
+      "phases": {
+        "guard_in": 402,
+        "verify_identity": 0,
+        "route_intent": 39,
+        "tools": 5332,
+        "guard_out": 5336,
+        "respond": 34
+      },
+      "answer": "Pengaduan Ibu sudah tercatat dengan nomor tiket TCK-MVYS0ETS dan tenggat 16 November 2026 pukul 04.46 UTC. Untuk kategori normal, ringkasan "
+    },
+    {
+      "id": "g09_keringanan_janji",
+      "rep": 1,
+      "intent": "keterlambatan",
+      "intentOk": true,
+      "model": "kenari:deepseek-v4-1-flash",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 4927,
+      "totalMs": 6174,
+      "wallMs": 6177,
+      "streamedChunks": 8,
+      "phases": {
+        "guard_in": 401,
+        "verify_identity": 0,
+        "route_intent": 0,
+        "tools": 5720,
+        "guard_out": 5725,
+        "respond": 33
+      },
+      "answer": "Saya belum bisa memastikan permintaan keringanan Anda disetujui atau tidak, karena keputusan bergantung pada kebijakan penyedia pinjaman dan"
+    },
+    {
+      "id": "g10_sapaan_umum",
+      "rep": 1,
+      "intent": "lain",
+      "intentOk": true,
+      "model": "kenari:gpt-6-luna",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 10632,
+      "totalMs": 13591,
+      "wallMs": 13593,
+      "streamedChunks": 3,
+      "phases": {
+        "guard_in": 402,
+        "verify_identity": 0,
+        "route_intent": 796,
+        "tools": 12343,
+        "guard_out": 12347,
+        "respond": 34
+      },
+      "answer": "Halo Bu, tentu 😊 Modal Mitra Contoh menyediakan pinjaman modal usaha mikro untuk warung melalui kelompok tanggung renteng atau majelis. Pla"
+    }
+  ]
+}

@@ -10,7 +10,8 @@
 //    tanpa hop jaringan eksternal) dijalankan PARALEL; siapa pun yang menghasilkan token pertama lebih
 //    dulu yang dipakai, yang kalah dibatalkan. Kedua jalur memakai prompt & guard streaming yang sama.
 //    Panggilan Workers AI hanya terjadi pada giliran yang Kenari-nya lambat (bukan setiap giliran),
-//    jadi pemakaian kuota harian Workers AI tetap kecil.
+//    jadi pemakaian kuota harian Workers AI tetap kecil. Hedge kedua = model Kenari plan lain dengan
+//    upstream berbeda (deepseek-v4-1-flash) — keterlambatan antar-upstream saling independen.
 import { kenariChatCompletion, kenariChatStream, resolveKenariModel, type KenariUsage } from "./kenari";
 
 export interface ChatMessage {
@@ -93,79 +94,111 @@ export interface StreamCallResult {
   ms: number;
   hedged: boolean;
   attempts: StreamAttempt[];
+  /** Kandidat balapan yang dijadwalkan (provider:model@delay) — untuk X-Ray. */
+  candidates?: string[];
 }
 
 /**
- * Streaming jawaban akhir dengan hedging Kenari ↔ Workers AI. `onDelta` hanya menerima potongan
- * dari SATU penyedia (pemenang token pertama) — tidak pernah campuran. Tidak pernah melempar.
+ * Streaming jawaban akhir dengan HEDGING lintas penyedia. Kandidat (urut, dengan waktu mulai):
+ *   1. Kenari `kenariModel` (utama)                 — mulai 0 ms
+ *   2. Kenari `kenariHedgeModel` (upstream berbeda) — mulai `hedgeAfterMs` bila belum ada token
+ *   3. Workers AI `workersModel` (co-located)       — mulai `workersAfterMs` (default = hedgeAfterMs)
+ * Kandidat yang GAGAL tanpa token langsung memicu kandidat berikutnya (tanpa menunggu timer).
+ * Siapa pun yang menghasilkan token pertama menang; sisanya dibatalkan (AbortController). `onDelta`
+ * hanya menerima potongan dari SATU pemenang — tidak pernah campuran. Tidak pernah melempar.
  */
 export async function streamChatModel(
   ai: Ai,
   workersModel: string,
   messages: ChatMessage[],
   onDelta: (d: string) => void | Promise<void>,
-  opts: { kenariApiKey?: string; kenariModel?: string; hedgeAfterMs?: number; max_tokens?: number } = {},
+  opts: { kenariApiKey?: string; kenariModel?: string; kenariHedgeModel?: string; hedgeAfterMs?: number; workersAfterMs?: number; max_tokens?: number } = {},
 ): Promise<StreamCallResult> {
   const t0 = Date.now();
   const maxTokens = opts.max_tokens ?? 700;
+  const hedgeAfterMs = opts.hedgeAfterMs ?? 1500;
   // Objek (bukan `let`) supaya penyempitan tipe TS tidak salah mengira nilainya selalu null.
-  const race: { winner: "kenari" | "workers_ai" | null } = { winner: null };
-  const kCtrl = new AbortController();
-  const wCtrl = new AbortController();
+  const race: { winner: number | null } = { winner: null };
   const attempts: StreamAttempt[] = [];
-  const hedge: { p: Promise<WorkersStreamResult> | null; timer: any } = { p: null, timer: null };
 
-  const startWorkers = (): Promise<WorkersStreamResult> => {
-    if (hedge.p) return hedge.p;
+  type Cand = { provider: "kenari" | "workers_ai"; model: string; delay: number; ctrl: AbortController; started?: Promise<{ text: string | null; ttftMs?: number; usage?: KenariUsage }>; timer?: any };
+  const cands: Cand[] = [];
+  if (opts.kenariApiKey) {
+    const primary = resolveKenariModel(opts.kenariModel);
+    cands.push({ provider: "kenari", model: primary, delay: 0, ctrl: new AbortController() });
+    if (opts.kenariHedgeModel && resolveKenariModel(opts.kenariHedgeModel) !== primary) cands.push({ provider: "kenari", model: resolveKenariModel(opts.kenariHedgeModel), delay: hedgeAfterMs, ctrl: new AbortController() });
+  }
+  // workersAfterMs < 0 -> Workers AI tidak ikut balapan (mis. anggaran neuron harian tercapai, aiBudget.ts).
+  const workersDelay = opts.kenariApiKey ? opts.workersAfterMs ?? hedgeAfterMs : 0;
+  if (workersDelay >= 0) cands.push({ provider: "workers_ai", model: workersModel, delay: workersDelay, ctrl: new AbortController() });
+
+  let resolveDone!: () => void;
+  const allDone = new Promise<void>((r) => (resolveDone = r));
+  let finished = 0;
+  let launched = 0;
+
+  const launch = (i: number) => {
+    const c = cands[i];
+    if (c.started || race.winner !== null) return;
+    clearTimeout(c.timer);
+    launched++;
     const startedAtMs = Date.now() - t0;
-    hedge.p = workersAiStream(ai, workersModel, messages, maxTokens, wCtrl.signal, async (d) => {
+    const onD = async (d: string) => {
       if (race.winner === null) {
-        race.winner = "workers_ai";
-        kCtrl.abort();
+        race.winner = i;
+        cands.forEach((o, j) => {
+          if (j !== i) {
+            clearTimeout(o.timer);
+            o.ctrl.abort();
+          }
+        });
       }
-      if (race.winner === "workers_ai") await onDelta(d);
-    }).then((r) => {
-      attempts.push({ provider: "workers_ai", model: workersModel, startedAtMs, ttftMs: r.ttftMs, ms: r.ms, outcome: race.winner === "workers_ai" ? "menang" : r.text ? "dibatalkan" : wCtrl.signal.aborted ? "dibatalkan" : "gagal" });
+      if (race.winner === i) await onDelta(d);
+    };
+    c.started = (
+      c.provider === "kenari"
+        ? kenariChatStream(opts.kenariApiKey!, messages, onD, { model: c.model, max_tokens: maxTokens, signal: c.ctrl.signal })
+        : workersAiStream(ai, c.model, messages, maxTokens, c.ctrl.signal, onD)
+    ).then((r: any) => {
+      attempts.push({
+        provider: c.provider,
+        model: c.model,
+        startedAtMs,
+        ttftMs: r.ttftMs,
+        ms: r.ms,
+        outcome: race.winner === i ? "menang" : c.ctrl.signal.aborted ? "dibatalkan" : "gagal",
+        usage: r.usage,
+      });
+      // Gagal tanpa token & belum ada pemenang -> segera jalankan kandidat berikutnya.
+      if (race.winner === null) for (let j = i + 1; j < cands.length; j++) if (!cands[j].started) { launch(j); break; }
+      finished++;
+      if (finished === launched && (race.winner !== null || cands.every((x) => x.started))) resolveDone();
       return r;
     });
-    return hedge.p;
   };
 
-  const kenariModel = resolveKenariModel(opts.kenariModel);
-  if (opts.kenariApiKey) {
-    hedge.timer = setTimeout(() => {
-      if (race.winner === null) startWorkers();
-    }, opts.hedgeAfterMs ?? 1800);
-    const k = await kenariChatStream(
-      opts.kenariApiKey,
-      messages,
-      async (d) => {
-        if (race.winner === null) {
-          race.winner = "kenari";
-          clearTimeout(hedge.timer);
-          wCtrl.abort();
-        }
-        if (race.winner === "kenari") await onDelta(d);
-      },
-      { model: kenariModel, max_tokens: maxTokens, signal: kCtrl.signal },
-    );
-    clearTimeout(hedge.timer);
-    attempts.push({ provider: "kenari", model: kenariModel, startedAtMs: 0, ttftMs: k.ttftMs, ms: k.ms, outcome: race.winner === "kenari" ? "menang" : kCtrl.signal.aborted ? "dibatalkan" : "gagal", usage: k.usage });
-    if (race.winner === "kenari") {
-      if (hedge.p) await hedge.p.catch(() => null);
-      return { text: k.text, modelUsed: `kenari:${kenariModel}`, degraded: false, usage: k.usage, ttftMs: k.ttftMs, ms: Date.now() - t0, hedged: !!hedge.p, attempts };
-    }
-  }
-  // Kenari kalah (Workers AI token pertama lebih dulu) ATAU gagal tanpa token / tidak dikonfigurasi.
-  const w = await startWorkers();
+  cands.forEach((c, i) => {
+    if (c.delay === 0) launch(i);
+    else c.timer = setTimeout(() => launch(i), c.delay);
+  });
+  await allDone;
+  cands.forEach((c) => clearTimeout(c.timer));
+
+  const w = race.winner;
+  if (w === null) return { text: null, modelUsed: "none", degraded: true, ms: Date.now() - t0, hedged: launched > 1, attempts };
+  const win = cands[w];
+  const r = await win.started!;
+  const winAttempt = attempts.find((a) => a.provider === win.provider && a.model === win.model);
   return {
-    text: w.text,
-    modelUsed: w.text ? workersModel : "none",
-    degraded: !!opts.kenariApiKey,
-    ttftMs: w.ttftMs !== undefined ? w.ttftMs + (attempts.find((a) => a.provider === "workers_ai")?.startedAtMs ?? 0) : undefined,
+    text: r.text,
+    modelUsed: win.provider === "kenari" ? `kenari:${win.model}` : win.model,
+    degraded: win.provider !== "kenari" || w !== 0,
+    usage: r.usage,
+    ttftMs: r.ttftMs !== undefined ? r.ttftMs + (winAttempt?.startedAtMs ?? 0) : undefined,
     ms: Date.now() - t0,
-    hedged: !!opts.kenariApiKey,
-    attempts,
+    hedged: launched > 1,
+    attempts: attempts.sort((a, b) => a.startedAtMs - b.startedAtMs),
+    candidates: cands.map((c) => `${c.provider}:${c.model}@${c.delay}ms`),
   };
 }
 
@@ -191,8 +224,13 @@ async function workersAiStream(
   const msgs = messages.map((m, i) => (i === messages.length - 1 && m.role === "user" ? { ...m, content: `${m.content}\n\n/no_think` } : m));
   try {
     const stream: any = await ai.run(model as any, { messages: msgs, stream: true, max_tokens: maxTokens, temperature: 0.2 } as any);
-    if (signal.aborted) return { text: null, ms: Date.now() - t0 };
+    if (signal.aborted) {
+      // Kalah sebelum stream mulai -> batalkan supaya tidak terus memakan neuron.
+      await (stream as ReadableStream).cancel?.().catch(() => {});
+      return { text: null, ms: Date.now() - t0 };
+    }
     const reader = (stream as ReadableStream<Uint8Array>).getReader();
+    signal.addEventListener("abort", () => void reader.cancel().catch(() => {}), { once: true });
     const dec = new TextDecoder();
     let buf = "";
     let pending = ""; // tampung awal output sampai yakin bukan/sudah lewat blok <think>

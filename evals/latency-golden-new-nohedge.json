@@ -1,0 +1,498 @@
+{
+  "impl": "new",
+  "measuredAt": "2026-11-02T04:43:51.472Z",
+  "env": {
+    "D1_LATENCY_MS": 8,
+    "AI_GUARD_SIM_MS": 400,
+    "workersAi": "stub (tidak terjangkau dari Node)",
+    "retrieval": "BM25 lokal (kedua implementasi)"
+  },
+  "n": 20,
+  "firstTokenMs": {
+    "p50": 4451,
+    "p95": 9540,
+    "min": 3267,
+    "max": 16251
+  },
+  "totalMs": {
+    "p50": 4933,
+    "p95": 10103,
+    "min": 3703,
+    "max": 16446
+  },
+  "phaseP50": {
+    "guard_in": 401,
+    "verify_identity": 0,
+    "route_intent": 0,
+    "tools": 4185,
+    "guard_out": 4189,
+    "respond": 30
+  },
+  "intentAccuracy": "20/20",
+  "rows": [
+    {
+      "id": "g01_biaya_jasa",
+      "rep": 0,
+      "intent": "info",
+      "intentOk": true,
+      "model": "kenari:gpt-6-luna",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 16251,
+      "totalMs": 16446,
+      "wallMs": 16458,
+      "streamedChunks": 2,
+      "phases": {
+        "guard_in": 401,
+        "verify_identity": 0,
+        "route_intent": 1,
+        "tools": 15982,
+        "guard_out": 15989,
+        "respond": 27
+      },
+      "answer": "Biaya jasa efektif pinjaman modal usaha mikro berkisar 10%\u201314% per tahun, tergantung produk dan riwayat pembayaran kelompok [produk#1]. Besa"
+    },
+    {
+      "id": "g02_telat_informal",
+      "rep": 0,
+      "intent": "keterlambatan",
+      "intentOk": true,
+      "model": "kenari:gpt-6-luna",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 3939,
+      "totalMs": 4147,
+      "wallMs": 4150,
+      "streamedChunks": 3,
+      "phases": {
+        "guard_in": 402,
+        "verify_identity": 1,
+        "route_intent": 1,
+        "tools": 3699,
+        "guard_out": 3704,
+        "respond": 30
+      },
+      "answer": "Tidak apa-apa, Bu, kita coba cari jalan keluarnya. Ada opsi penjadwalan ulang atau restrukturisasi; permintaannya bisa saya catat untuk diti"
+    },
+    {
+      "id": "g03_verify_angsuran",
+      "rep": 0,
+      "intent": "akun",
+      "intentOk": true,
+      "model": "kenari:gpt-6-luna",
+      "blockedByGuard": null,
+      "tools": [
+        "verify_mitra",
+        "get_angsuran"
+      ],
+      "firstTokenMs": 4731,
+      "totalMs": 4797,
+      "wallMs": 4800,
+      "streamedChunks": 2,
+      "phases": {
+        "guard_in": 401,
+        "verify_identity": 20,
+        "route_intent": 0,
+        "tools": 4323,
+        "guard_out": 4292,
+        "respond": 27
+      },
+      "answer": "Sisa angsuran tercatat Rp1.948.800 untuk 29 kali angsuran. Angsuran ke-22 berstatus terlambat; bila sedang kesulitan membayar, saya bisa ban"
+    },
+    {
+      "id": "g04_majelis_verify",
+      "rep": 0,
+      "intent": "akun",
+      "intentOk": true,
+      "model": "kenari:gpt-6-luna",
+      "blockedByGuard": null,
+      "tools": [
+        "verify_mitra",
+        "get_majelis_info"
+      ],
+      "firstTokenMs": 3800,
+      "totalMs": 4058,
+      "wallMs": 4060,
+      "streamedChunks": 2,
+      "phases": {
+        "guard_in": 402,
+        "verify_identity": 18,
+        "route_intent": 1,
+        "tools": 3581,
+        "guard_out": 3547,
+        "respond": 30
+      },
+      "answer": "Pertemuan Majelis Mawar 02 selanjutnya dijadwalkan Selasa, 3 November 2026 pukul 09.00, bersama petugas lapangan Hendra Wijaya. Jadwal perte"
+    },
+    {
+      "id": "g05_pendana_portofolio",
+      "rep": 0,
+      "intent": "akun",
+      "intentOk": true,
+      "model": "kenari:gpt-6-luna",
+      "blockedByGuard": null,
+      "tools": [
+        "verify_pendana",
+        "get_portofolio"
+      ],
+      "firstTokenMs": 3555,
+      "totalMs": 4359,
+      "wallMs": 4362,
+      "streamedChunks": 3,
+      "phases": {
+        "guard_in": 402,
+        "verify_identity": 20,
+        "route_intent": 0,
+        "tools": 3882,
+        "guard_out": 3850,
+        "respond": 31
+      },
+      "answer": "Portofolio pendanaan Anda mencakup 4 pendanaan dengan total Rp26.000.000: 2 berstatus berjalan, 1 lunas, dan 1 menunggu pencairan. Estimasi "
+    },
+    {
+      "id": "g06_imbal_hasil",
+      "rep": 0,
+      "intent": "info",
+      "intentOk": true,
+      "model": "kenari:gpt-6-luna",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 4211,
+      "totalMs": 4643,
+      "wallMs": 4647,
+      "streamedChunks": 3,
+      "phases": {
+        "guard_in": 401,
+        "verify_identity": 0,
+        "route_intent": 0,
+        "tools": 4185,
+        "guard_out": 4189,
+        "respond": 28
+      },
+      "answer": "Tidak, imbal hasil pendanaan adalah estimasi berdasarkan data historis dan bukan jaminan; tetap ada risiko gagal bayar kelompok yang menjadi"
+    },
+    {
+      "id": "g07_syarat_pengajuan",
+      "rep": 0,
+      "intent": "pengajuan",
+      "intentOk": true,
+      "model": "kenari:gpt-6-luna",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 4155,
+      "totalMs": 5013,
+      "wallMs": 5016,
+      "streamedChunks": 4,
+      "phases": {
+        "guard_in": 401,
+        "verify_identity": 0,
+        "route_intent": 1,
+        "tools": 4559,
+        "guard_out": 4564,
+        "respond": 29
+      },
+      "answer": "Pengajuan pinjaman baru ditujukan untuk perempuan pelaku usaha mikro di pedesaan dan disalurkan melalui kelompok tanggung renteng (majelis) "
+    },
+    {
+      "id": "g08_sla_pengaduan",
+      "rep": 0,
+      "intent": "pengaduan",
+      "intentOk": true,
+      "model": "kenari:gpt-6-luna",
+      "blockedByGuard": null,
+      "tools": [
+        "create_complaint_ticket"
+      ],
+      "firstTokenMs": 5321,
+      "totalMs": 5852,
+      "wallMs": 5854,
+      "streamedChunks": 2,
+      "phases": {
+        "guard_in": 402,
+        "verify_identity": 0,
+        "route_intent": 39,
+        "tools": 5359,
+        "guard_out": 5363,
+        "respond": 30
+      },
+      "answer": "Tenggat penanganan bergantung pada kategori pengaduan; ringkasan yang tersedia menyebut maksimal 10 hari kerja untuk kategori normal, tetapi"
+    },
+    {
+      "id": "g09_keringanan_janji",
+      "rep": 0,
+      "intent": "keterlambatan",
+      "intentOk": true,
+      "model": "kenari:gpt-6-luna",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 3406,
+      "totalMs": 3891,
+      "wallMs": 3895,
+      "streamedChunks": 3,
+      "phases": {
+        "guard_in": 402,
+        "verify_identity": 0,
+        "route_intent": 0,
+        "tools": 3438,
+        "guard_out": 3442,
+        "respond": 29
+      },
+      "answer": "Belum bisa dipastikan, Bu. Permintaan keringanan bisa dicatat untuk ditinjau petugas lapangan atau tim kredit, tetapi saya belum menemukan i"
+    },
+    {
+      "id": "g10_sapaan_umum",
+      "rep": 0,
+      "intent": "lain",
+      "intentOk": true,
+      "model": "kenari:gpt-6-luna",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 4332,
+      "totalMs": 4933,
+      "wallMs": 4935,
+      "streamedChunks": 5,
+      "phases": {
+        "guard_in": 402,
+        "verify_identity": 1,
+        "route_intent": 798,
+        "tools": 3677,
+        "guard_out": 3682,
+        "respond": 31
+      },
+      "answer": "Halo, Bu. Pinjaman modal usaha tersedia untuk mitra perempuan pelaku usaha mikro melalui kelompok majelis. Plafon awalnya Rp1.000.000\u2013Rp5.00"
+    },
+    {
+      "id": "g01_biaya_jasa",
+      "rep": 1,
+      "intent": "info",
+      "intentOk": true,
+      "model": "kenari:gpt-6-luna",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 4451,
+      "totalMs": 4528,
+      "wallMs": 4529,
+      "streamedChunks": 2,
+      "phases": {
+        "guard_in": 401,
+        "verify_identity": 0,
+        "route_intent": 0,
+        "tools": 4086,
+        "guard_out": 4087,
+        "respond": 34
+      },
+      "answer": "Biaya jasa efektif berkisar 10%\u201314% per tahun, tergantung produk dan riwayat pembayaran kelompok. [produk#1]"
+    },
+    {
+      "id": "g02_telat_informal",
+      "rep": 1,
+      "intent": "keterlambatan",
+      "intentOk": true,
+      "model": "kenari:gpt-6-luna",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 4936,
+      "totalMs": 6079,
+      "wallMs": 6082,
+      "streamedChunks": 4,
+      "phases": {
+        "guard_in": 401,
+        "verify_identity": 0,
+        "route_intent": 0,
+        "tools": 5628,
+        "guard_out": 5634,
+        "respond": 29
+      },
+      "answer": "Nggak apa-apa, Bu. Kita bisa bahas opsi penjadwalan ulang atau restrukturisasi; saya dapat mencatat permintaan Ibu agar ditinjau petugas lap"
+    },
+    {
+      "id": "g03_verify_angsuran",
+      "rep": 1,
+      "intent": "akun",
+      "intentOk": true,
+      "model": "kenari:gpt-6-luna",
+      "blockedByGuard": null,
+      "tools": [
+        "verify_mitra",
+        "get_angsuran"
+      ],
+      "firstTokenMs": 7949,
+      "totalMs": 8159,
+      "wallMs": 8161,
+      "streamedChunks": 3,
+      "phases": {
+        "guard_in": 402,
+        "verify_identity": 20,
+        "route_intent": 0,
+        "tools": 7685,
+        "guard_out": 7658,
+        "respond": 29
+      },
+      "answer": "Sisa angsuran tercatat 29 kali, total Rp1.948.800. Angsuran periode 22 sebesar Rp67.200 tercatat terlambat, dan periode 23 sebesar Rp67.200 "
+    },
+    {
+      "id": "g04_majelis_verify",
+      "rep": 1,
+      "intent": "akun",
+      "intentOk": true,
+      "model": "kenari:gpt-6-luna",
+      "blockedByGuard": null,
+      "tools": [
+        "verify_mitra",
+        "get_majelis_info"
+      ],
+      "firstTokenMs": 9540,
+      "totalMs": 10103,
+      "wallMs": 10105,
+      "streamedChunks": 3,
+      "phases": {
+        "guard_in": 401,
+        "verify_identity": 19,
+        "route_intent": 0,
+        "tools": 9628,
+        "guard_out": 9592,
+        "respond": 30
+      },
+      "answer": "Pertemuan Majelis Mawar 02 berikutnya dijadwalkan Selasa, 3 November 2026 pukul 09.00, dengan petugas lapangan Hendra Wijaya. [faq#2] Jadwal"
+    },
+    {
+      "id": "g05_pendana_portofolio",
+      "rep": 1,
+      "intent": "akun",
+      "intentOk": true,
+      "model": "kenari:gpt-6-luna",
+      "blockedByGuard": null,
+      "tools": [
+        "verify_pendana",
+        "get_portofolio"
+      ],
+      "firstTokenMs": 3267,
+      "totalMs": 3859,
+      "wallMs": 3862,
+      "streamedChunks": 3,
+      "phases": {
+        "guard_in": 402,
+        "verify_identity": 17,
+        "route_intent": 0,
+        "tools": 3397,
+        "guard_out": 3369,
+        "respond": 28
+      },
+      "answer": "Ringkasan portofolio pendanaan Anda: total didanai Rp26.000.000 untuk 4 pendanaan. Dua pendanaan berstatus berjalan, satu menunggu pencairan"
+    },
+    {
+      "id": "g06_imbal_hasil",
+      "rep": 1,
+      "intent": "info",
+      "intentOk": true,
+      "model": "kenari:gpt-6-luna",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 4910,
+      "totalMs": 5123,
+      "wallMs": 5126,
+      "streamedChunks": 2,
+      "phases": {
+        "guard_in": 402,
+        "verify_identity": 1,
+        "route_intent": 0,
+        "tools": 4675,
+        "guard_out": 4680,
+        "respond": 30
+      },
+      "answer": "Tidak, estimasi imbal hasil bukan jaminan dan pendanaan P2P memiliki risiko gagal bayar [faq#6] [risiko-pendanaan#1]. Dana yang disalurkan b"
+    },
+    {
+      "id": "g07_syarat_pengajuan",
+      "rep": 1,
+      "intent": "pengajuan",
+      "intentOk": true,
+      "model": "kenari:gpt-6-luna",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 4663,
+      "totalMs": 5084,
+      "wallMs": 5086,
+      "streamedChunks": 4,
+      "phases": {
+        "guard_in": 401,
+        "verify_identity": 0,
+        "route_intent": 1,
+        "tools": 4628,
+        "guard_out": 4633,
+        "respond": 29
+      },
+      "answer": "Pengajuan pinjaman baru ditujukan untuk perempuan pelaku usaha mikro di pedesaan dan disalurkan melalui kelompok tanggung renteng atau majel"
+    },
+    {
+      "id": "g08_sla_pengaduan",
+      "rep": 1,
+      "intent": "pengaduan",
+      "intentOk": true,
+      "model": "kenari:gpt-6-luna",
+      "blockedByGuard": null,
+      "tools": [
+        "create_complaint_ticket"
+      ],
+      "firstTokenMs": 8610,
+      "totalMs": 9295,
+      "wallMs": 9296,
+      "streamedChunks": 3,
+      "phases": {
+        "guard_in": 400,
+        "verify_identity": 0,
+        "route_intent": 38,
+        "tools": 8809,
+        "guard_out": 8811,
+        "respond": 31
+      },
+      "answer": "Saya belum menemukan tenggat resmi yang bisa dipastikan. Ringkasan yang tersedia menyebut pengaduan kategori normal ditindaklanjuti maksimal"
+    },
+    {
+      "id": "g09_keringanan_janji",
+      "rep": 1,
+      "intent": "keterlambatan",
+      "intentOk": true,
+      "model": "kenari:gpt-6-luna",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 3304,
+      "totalMs": 3703,
+      "wallMs": 3705,
+      "streamedChunks": 3,
+      "phases": {
+        "guard_in": 400,
+        "verify_identity": 0,
+        "route_intent": 1,
+        "tools": 3255,
+        "guard_out": 3259,
+        "respond": 32
+      },
+      "answer": "Belum tentu, Bu; permintaan keringanan perlu ditinjau dulu oleh petugas lapangan atau tim kredit, jadi saya tidak bisa memastikan hasilnya. "
+    },
+    {
+      "id": "g10_sapaan_umum",
+      "rep": 1,
+      "intent": "lain",
+      "intentOk": true,
+      "model": "kenari:gpt-6-luna",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 4536,
+      "totalMs": 5344,
+      "wallMs": 5346,
+      "streamedChunks": 5,
+      "phases": {
+        "guard_in": 402,
+        "verify_identity": 0,
+        "route_intent": 795,
+        "tools": 4096,
+        "guard_out": 4100,
+        "respond": 31
+      },
+      "answer": "Halo, Bu! Pinjaman ini ditujukan untuk perempuan pelaku usaha mikro di pedesaan dan disalurkan lewat kelompok tanggung renteng atau majelis."
+    }
+  ],
+  "hedgeModel": null,
+  "note": "Varian TANPA hedge Kenari kedua (luna saja; Workers AI stub). Dijalankan sebelum KENARI_HEDGE_MODEL ditambahkan ke harness."
+}

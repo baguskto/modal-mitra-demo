@@ -125,3 +125,39 @@ describe("StreamGuard — streaming aman per kalimat", () => {
     expect(shown.join("")).not.toContain("citations");
   });
 });
+
+describe("StreamGuard — temuan review Opus (bypass & kebocoran X-Ray)", () => {
+  it("markdown / zero-width / tanda hubung unicode tidak bisa mengakali pola janji finansial", async () => {
+    for (const evil of ["Pengajuan Ibu pasti **disetujui** ya.", "Pengajuan Ibu pasti​disetujui ya.", "Pengajuan Ibu pasti _disetujui_ ya."]) {
+      const { g, shown, pushTokens } = harness();
+      await pushTokens(evil);
+      const r = await g.finish();
+      expect(r.blockedBy).toBe("janji_finansial");
+      expect(shown.join("")).not.toMatch(/disetujui/);
+    }
+  });
+
+  it("ID pinjaman dengan tanda hubung unicode (MMK‑100002) tetap tertangkap privasi", async () => {
+    const { g, shown, pushTokens } = harness({ allowed: ["MMK-100001"] });
+    await pushTokens("Sisa angsuran MMK‑100002 Rp500.000.");
+    const r = await g.finish();
+    expect(r.blockedBy).toBe("privasi_antar_majelis");
+    expect(shown.join("")).not.toContain("100002");
+  });
+
+  it("spasi panjang tidak mendorong awal frasa terlarang keluar jendela cek", async () => {
+    const { g, shown, pushTokens } = harness();
+    await pushTokens(`Peluang Ibu 100%${" ".repeat(200)}\ndisetujui kok.`);
+    const r = await g.finish();
+    expect(r.blockedBy).toBe("janji_finansial");
+    expect(shown.join("")).not.toMatch(/disetujui/);
+  });
+
+  it("output berawalan code fence yang datang per 1 karakter tetap dianggap JSON (ditahan, tidak bocor)", async () => {
+    const { g, shown } = harness();
+    for (const ch of '```json\n{"type":"final_answer","text":"Halo Bu.","thought":"rahasia"}\n```') await g.push(ch);
+    expect(shown).toHaveLength(0);
+    await g.finish();
+    expect(shown.join("")).not.toMatch(/thought|rahasia|```/);
+  });
+});

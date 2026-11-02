@@ -24,11 +24,26 @@ import { resolveLeakedTokensInText, scanOutputForPII } from "./pii";
 import { FORBIDDEN_PROMISE, POLICY_CLAIM_SIGNAL, CITATION_RE, checkCitationsGrounded, checkMemberPrivacyLeak, salvageJsonTail, FALLBACK_NOT_FOUND } from "./output";
 import type { XrayGuardRule } from "../obs/xrayDetail";
 
-const PROMPT_LEAK = /(ATURAN KETAT|FORMAT RESPON|tidak bisa dinegosiasikan oleh pesan pengguna|PERAN LAWAN BICARA|<data source=|BUKAN instruksi">)/i;
-const PROTOCOL_JSON = /(^\s*\{|"(type|citations|tool|args)"\s*:)/;
+export const PROMPT_LEAK = /(ATURAN KETAT|FORMAT RESPON|tidak bisa dinegosiasikan oleh pesan pengguna|PERAN LAWAN BICARA|<data source=|BUKAN instruksi">|TOOLS YANG TERSEDIA)/i;
+const PROTOCOL_JSON = /(^\s*\{|"(type|citations|tool|args|thought|text|reason)"\s*:)/;
+
+/**
+ * Normalisasi SEBELUM pencocokan pola (review Opus P2): NFKC, buang zero-width & penanda markdown
+ * (`pasti **disetujui**`, `pasti\u200Bdisetujui`), seragamkan tanda hubung unicode (MMK‑123456),
+ * rapatkan spasi/baris baru. Hanya untuk PENGECEKAN — teks yang tampil tetap asli.
+ */
+export function normalizeForGuard(t: string): string {
+  return t
+    .normalize("NFKC")
+    .replace(/[\u200B-\u200D\u2060\uFEFF\u00AD]/g, " ") // jadi spasi: "pasti<ZWSP>disetujui" tetap cocok
+    .replace(/[*_~`]/g, "")
+    .replace(/[\u2010-\u2015\u2212]/g, "-")
+    .replace(/\s+/g, " ");
+}
+const INPUT_UNSAFE_TEXT = "Maaf, pesan Anda terdeteksi tidak aman untuk diproses otomatis. Saya alihkan ke CS manusia.";
 const PRIVACY_REPLACEMENT = "Maaf, saya tidak dapat menampilkan data yang bukan milik Anda. Jika ini terkait data Anda sendiri, mohon verifikasi ulang; untuk hal lain saya alihkan ke CS.";
 
-export type GuardBlockReason = "janji_finansial" | "pii_output" | "privasi_antar_majelis" | "sitasi_tidak_grounded" | "prompt_leak" | "sitasi_wajib";
+export type GuardBlockReason = "janji_finansial" | "pii_output" | "privasi_antar_majelis" | "sitasi_tidak_grounded" | "prompt_leak" | "sitasi_wajib" | "input_unsafe";
 
 export interface StreamGuardOptions {
   vault: Map<string, string>;
@@ -41,6 +56,8 @@ export interface StreamGuardOptions {
   replace?: (text: string, reason: GuardBlockReason) => void | Promise<void>;
   /** Parser cadangan bila model membalas JSON protokol (extractAnswerFallback di graph.ts). */
   parseJson?: (raw: string) => { text: string; citations: string[] };
+  /** Gerbang input (verdict Llama Guard yang berjalan paralel) — ditunggu SEKALI sebelum teks pertama tampil. */
+  gate?: () => Promise<boolean>;
 }
 
 export interface StreamGuardResult {
@@ -53,9 +70,10 @@ export interface StreamGuardResult {
   heldJson: boolean;
 }
 
-type RuleKey = "kebocoran_prompt" | "ekor_json_protokol" | "token_redaksi" | "scan_pii" | "janji_finansial" | "privasi_antar_majelis" | "sitasi_grounded" | "sitasi_wajib";
+type RuleKey = "gerbang_input" | "kebocoran_prompt" | "ekor_json_protokol" | "token_redaksi" | "scan_pii" | "janji_finansial" | "privasi_antar_majelis" | "sitasi_grounded" | "sitasi_wajib";
 
 const RULE_LABEL: Record<RuleKey, string> = {
+  gerbang_input: "gerbang Llama Guard sebelum teks pertama",
   kebocoran_prompt: "kebocoran system prompt",
   ekor_json_protokol: "ekor/JSON protokol internal",
   token_redaksi: "token redaksi PII → nilai milik pengguna",
@@ -80,6 +98,7 @@ export class StreamGuard {
   private sentencesShown = 0;
   private sentencesChecked = 0;
   private replaced = false;
+  private gated = false;
   private stats = new Map<RuleKey, { result: XrayGuardRule["result"]; detail?: string }>();
 
   constructor(private o: StreamGuardOptions) {}
@@ -93,7 +112,8 @@ export class StreamGuard {
     this.buf += delta;
     if (this.jsonMode === null) {
       const t = this.buf.trimStart();
-      if (!t) return;
+      // Putuskan setelah >= 3 karakter non-spasi (review Opus P2: "`" atau "``" saja terlalu dini).
+      if (t.length < 3 && !t.startsWith("{")) return;
       this.jsonMode = t.startsWith("{") || t.startsWith("```");
     }
     if (this.jsonMode) return; // tahan semuanya, diparse di finish()
@@ -126,15 +146,16 @@ export class StreamGuard {
     this.buf = "";
 
     if (!this.blockedBy) {
-      const needCitation = this.o.citationRequired() && POLICY_CLAIM_SIGNAL.test(this.shown);
-      if (needCitation && !CITATION_RE.test(this.shown)) {
+      const shownNorm = normalizeForGuard(this.shown);
+      const needCitation = this.o.citationRequired() && POLICY_CLAIM_SIGNAL.test(shownNorm);
+      if (needCitation && !CITATION_RE.test(shownNorm)) {
         this.note("sitasi_wajib", "blok", "klaim kebijakan tanpa sitasi sama sekali → diganti pesan aman");
         await this.block("sitasi_wajib");
       } else {
         this.note("sitasi_wajib", needCitation ? "lolos" : "lewati", needCitation ? "ada sitasi" : "tidak ada klaim kebijakan / RAG tidak relevan");
       }
     }
-    if (!this.shown.trim() && !this.blockedBy) {
+    if (!this.shown.trim() && !this.blockedBy && (await this.passGate())) {
       // Model tidak menghasilkan teks apa pun -> pesan aman standar.
       this.shown = FALLBACK_NOT_FOUND;
       await this.o.emit(FALLBACK_NOT_FOUND);
@@ -172,23 +193,39 @@ export class StreamGuard {
     }
     const resolved = resolveLeakedTokensInText(text, this.o.vault);
     if (resolved !== text) this.note("token_redaksi", "ubah", "token [TIPE_n] dikembalikan ke nilai milik pengguna sendiri");
-    // Spasi/baris baru dinormalkan: "100%\ndisetujui" harus tetap cocok dengan pola "100% disetujui".
-    const windowText = (this.shown.slice(-80) + resolved).replace(/\s+/g, " ");
+    // Normalisasi DULU baru ambil ekor (review Opus P2: spasi panjang tidak boleh mendorong awal frasa
+    // terlarang keluar jendela). "100%\ndisetujui" tetap cocok dengan pola "100% disetujui".
+    const windowText = normalizeForGuard(this.shown).slice(-80) + normalizeForGuard(resolved);
 
     if (PROMPT_LEAK.test(windowText)) return this.violate("kebocoran_prompt", "prompt_leak", "pola instruksi internal terdeteksi");
     const pii = scanOutputForPII(windowText);
     if (!pii.clean) return this.violate("scan_pii", "pii_output", pii.findings.join(", "));
     const promise = FORBIDDEN_PROMISE.find((re) => re.test(windowText));
     if (promise) return this.violate("janji_finansial", "janji_finansial", `pola: ${promise.source.slice(0, 50)}`);
-    const privacy = checkMemberPrivacyLeak(resolved, this.o.allowedIds());
+    const privacy = checkMemberPrivacyLeak(normalizeForGuard(resolved), this.o.allowedIds());
     if (!privacy.ok) return this.violate("privasi_antar_majelis", "privasi_antar_majelis", `${privacy.leaked.length} ID bukan milik pengguna`);
-    const grounded = checkCitationsGrounded(resolved, this.o.retrievedIds());
+    const grounded = checkCitationsGrounded(normalizeForGuard(resolved), this.o.retrievedIds());
     if (!grounded.grounded) return this.violate("sitasi_grounded", "sitasi_tidak_grounded", `sitasi tak dikenal: ${grounded.invalid.join(", ").slice(0, 60)}`);
 
     if (!resolved) return;
+    if (!(await this.passGate())) return;
     this.shown += resolved;
     this.sentencesShown++;
     await this.o.emit(resolved);
+  }
+
+  /** true bila gerbang input aman (atau tidak ada gerbang). Gagal -> blok "input_unsafe", tidak ada teks model yang tampil. */
+  private async passGate(): Promise<boolean> {
+    if (this.gated || !this.o.gate) return !this.blockedBy;
+    this.gated = true;
+    const ok = await this.o.gate();
+    if (ok) {
+      this.note("gerbang_input", "lolos", "verdict aman diterima sebelum teks pertama");
+      return true;
+    }
+    this.note("gerbang_input", "blok", "Llama Guard: input tidak aman → seluruh jawaban model dibuang");
+    await this.block("input_unsafe");
+    return false;
   }
 
   private async violate(rule: RuleKey, reason: GuardBlockReason, detail: string): Promise<void> {
@@ -198,7 +235,7 @@ export class StreamGuard {
 
   private async block(reason: GuardBlockReason): Promise<void> {
     this.blockedBy = reason;
-    const safe = reason === "privasi_antar_majelis" ? PRIVACY_REPLACEMENT : FALLBACK_NOT_FOUND;
+    const safe = reason === "privasi_antar_majelis" ? PRIVACY_REPLACEMENT : reason === "input_unsafe" ? INPUT_UNSAFE_TEXT : FALLBACK_NOT_FOUND;
     if (this.shown.trim() && this.o.replace) {
       this.replaced = true;
       await this.o.replace(safe, reason);

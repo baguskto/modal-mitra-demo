@@ -215,3 +215,11 @@ CREATE TABLE IF NOT EXISTS long_term_memory (
   consent_at TEXT,
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- feat/latency-xray: perkiraan neuron Workers AI per hari UTC (cap biaya nol, src/agent/aiBudget.ts).
+-- Juga dibuat malas oleh kode (CREATE TABLE IF NOT EXISTS) supaya deploy tanpa migrasi tetap aman.
+CREATE TABLE IF NOT EXISTS workers_ai_budget (
+  day TEXT PRIMARY KEY,
+  neurons REAL NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

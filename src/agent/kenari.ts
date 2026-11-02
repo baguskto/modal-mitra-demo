@@ -113,6 +113,7 @@ export async function kenariChatStream(
       return { text: null, model, ms: Date.now() - t0 };
     }
     const reader = res.body.getReader();
+    opts.signal?.addEventListener("abort", () => void reader.cancel().catch(() => {}), { once: true });
     const dec = new TextDecoder();
     let buf = "";
     for (;;) {

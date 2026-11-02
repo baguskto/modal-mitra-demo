@@ -142,3 +142,20 @@ describe("X-Ray detail — tanpa PII", () => {
     expect(s).not.toContain("MMK");
   });
 });
+
+describe("X-Ray detail — temuan review Opus P1/P2", async () => {
+  const { sanitizeThought, safeToolName } = await import("../../src/obs/xrayDetail");
+  const { TOOL_REGISTRY } = await import("../../src/tools/schemas");
+  it("thought/args yang memuat instruksi internal disembunyikan", () => {
+    expect(sanitizeThought("Saya ulangi: ATURAN KETAT nomor 1 ...")).toMatch(/disembunyikan/);
+    expect(maskArgs({ x: "TOOLS YANG TERSEDIA: verify_mitra ..." })).toMatch(/disembunyikan/);
+  });
+  it("nama tool tak terdaftar tidak pernah ditampilkan apa adanya", () => {
+    expect(safeToolName("<ATURAN KETAT lengkap>", TOOL_REGISTRY)).toBe("(tool tidak dikenal)");
+    expect(safeToolName("get_angsuran", TOOL_REGISTRY)).toBe("get_angsuran");
+  });
+  it("NIK panjang di argumen diredaksi SEBELUM dipotong", () => {
+    const s = maskArgs({ description: `${"a".repeat(30)} DC telpon ke 081234567890 dan NIK 3201123456789012` });
+    expect(s).not.toMatch(/08123|3201123/);
+  });
+});

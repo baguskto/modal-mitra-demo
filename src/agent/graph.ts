@@ -30,15 +30,16 @@ import { checkThirdPartyPiiRequest } from "../guards/privacy";
 import { salvageJsonTail, FALLBACK_NOT_FOUND } from "../guards/output";
 import { StreamGuard, type GuardBlockReason } from "../guards/streamGuard";
 import { classifyIntent, detectHitl, type Intent, type Persona } from "./router";
-import { classifyIntentLLM, type LlmIntentResult } from "./classify";
+import { classifyIntentFast, type LlmIntentResult } from "./classify";
 import { retrieve, formatChunksAsContext, type RetrievalResult } from "./rag";
 import { buildSystemPrompt, buildUserTurn, buildToolResultTurn, buildStreamingAnswerTurn } from "./prompts";
 import { callChatModel, streamChatModel, type ChatMessage } from "./llm";
 import { TOOL_REGISTRY, normalizeToolArgs, normalizeBirthDate, type ToolName } from "../tools/schemas";
 import { executeTool } from "../tools/execute";
 import { appendAuditLog } from "../obs/audit";
+import { WorkersAiBudget, meteredAi, RACE_CAP } from "./aiBudget";
 import type { LangfuseTrace } from "../obs/langfuse";
-import { TECH, maskArgs, summarizeToolResult, sanitizeThought, type XrayCall, type XrayGuardRule, type XrayReactStep, type XrayTechnique } from "../obs/xrayDetail";
+import { TECH, maskArgs, summarizeToolResult, sanitizeThought, safeToolName, type XrayCall, type XrayGuardRule, type XrayReactStep, type XrayTechnique } from "../obs/xrayDetail";
 
 export interface AgentEnvBindings {
   AI: Ai;
@@ -50,14 +51,19 @@ export interface AgentEnvBindings {
   KENARI_API_KEY?: string;
   /** Model chat Kenari (harus anggota scope_models paket & billing plan — lihat kenari.ts PLAN_MODELS). */
   KENARI_CHAT_MODEL?: string;
-  /** ms tanpa token pertama dari Kenari sebelum Workers AI dijalankan paralel (hedged request). */
+  /** Model Kenari kedua (upstream berbeda) untuk hedged request — juga wajib plan. */
+  KENARI_HEDGE_MODEL?: string;
+  /** ms tanpa token pertama dari Kenari sebelum model Kenari kedua dijalankan paralel. */
   LLM_HEDGE_AFTER_MS?: string;
+  /** ms sebelum Workers AI (co-located) ikut balapan; "0" = balapan sejak awal. Default = LLM_HEDGE_AFTER_MS. */
+  WORKERS_AI_RACE_AFTER_MS?: string;
 }
 
 // 6 — lihat catatan historis di README §Keputusan Desain (3 terlalu kecil untuk verify->lookup->final).
 const MAX_STEPS = 6;
 const LLAMA_GUARD_TIMEOUT_MS = 1500;
-const INTENT_LLM_TIMEOUT_MS = 2500;
+// Anggaran total klasifikasi cadangan (dimulai di guard_in) — tidak boleh menahan jalur kritis lama.
+const INTENT_LLM_BUDGET_MS = 1200;
 
 const TicketLike = z.any().nullable();
 
@@ -125,6 +131,7 @@ interface RunBag {
   firstTokenAt?: number;
   auditQ: Promise<unknown>;
   ragDetail?: Record<string, unknown>;
+  budget: WorkersAiBudget;
 }
 
 interface RunConfigurable {
@@ -220,6 +227,14 @@ function techs(...t: XrayTechnique[]): XrayTechnique[] {
   return t;
 }
 
+const LLAMA_BLOCK_TEXT = "Maaf, pesan Anda terdeteksi tidak aman untuk diproses otomatis. Saya alihkan ke CS manusia.";
+
+/** Gerbang Llama Guard (dimulai paralel di guard_in). true = aman/fail-open. */
+async function llamaGate(bag: RunBag): Promise<boolean> {
+  const lg = await bag.llamaGuard;
+  return !lg?.blocked;
+}
+
 // --- NODE: guard_in — aturan deterministik -> redaksi PII -> (paralel) Llama Guard + RAG + intent cadangan ---
 async function nodeGuardIn(state: State, config: any): Promise<Partial<State>> {
   const { env, trace, bag }: RunConfigurable = config.configurable;
@@ -262,35 +277,35 @@ async function nodeGuardIn(state: State, config: any): Promise<Partial<State>> {
   rules.push({ rule: "redaksi PII", result: matches.length ? "ubah" : "lolos", detail: matches.length ? `${matches.length} nilai → token (${[...new Set(matches.map((m) => m.type))].join(", ")})` : "tidak ada PII" });
   if (matches.length > 0) audit(bag, env.DB, state.sessionId, "system", "pii_redacted", { count: matches.length, types: matches.map((m) => m.type) });
 
-  // Mulai PARALEL: Llama Guard (ditunggu di sini), retrieval RAG (ditunggu di tools), intent cadangan
-  // (ditunggu di route_intent, hanya bila aturan regex = "lain"). Retrieval memakai teks TEREDAKSI.
+  // Mulai PARALEL (feat/latency-xray): Llama Guard, retrieval RAG (ditunggu di tools), intent cadangan
+  // (ditunggu di route_intent, hanya bila aturan regex = "lain"). Llama Guard TIDAK ditunggu di sini:
+  // verdict-nya menjadi GERBANG sebelum (a) aksi tulis apa pun (tiket/DSR/restru) dan (b) teks pertama
+  // tampil ke pengguna (StreamGuard.gate) — jadi model boleh mulai menulis, tapi tidak ada yang tampil
+  // atau tertulis ke D1 sebelum pesan dinyatakan aman. Retrieval memakai teks TEREDAKSI.
   const lgStart = Date.now();
+  const lgSpan = trace?.span("llama_guard", { parallel: true });
   bag.llamaGuard = withTimeout(
     llamaGuardCheck(env.AI, env.MODEL_GUARD, redacted).then((r) => ({ ...r, ms: Date.now() - lgStart })),
     LLAMA_GUARD_TIMEOUT_MS,
     { blocked: false, source: "none" as const, reason: `timeout ${LLAMA_GUARD_TIMEOUT_MS}ms → fail-open ke aturan`, ms: LLAMA_GUARD_TIMEOUT_MS },
-  );
+  ).then((lg) => {
+    const call: XrayCall = { kind: "model", name: env.MODEL_GUARD.replace(/^@cf\//, ""), args: "pesan teredaksi", result: lg.blocked ? `unsafe → blok (${lg.reason?.slice(0, 40)})` : lg.source === "none" ? lg.reason ?? "tidak tersedia → fail-open" : lg.reason ? `observasi: ${lg.reason}` : "safe", ms: lg.ms, atMs: startedAt };
+    const rule: XrayGuardRule = lg.blocked ? { rule: "Llama Guard 3", result: "blok", detail: lg.reason?.slice(0, 80) } : { rule: "Llama Guard 3", result: lg.source === "none" ? "lewati" : "lolos", detail: lg.source === "none" ? "fail-open (aturan deterministik tetap berlaku)" : undefined };
+    if (lg.blocked) audit(bag, env.DB, state.sessionId, "system", "guard_block", { layer: "llama_guard", reason: lg.reason });
+    lgSpan?.end({ blocked: lg.blocked, layer: lg.blocked ? "llama_guard" : undefined, technique: techs(TECH.llamaGuard, TECH.parallel), calls: [call], guards: [rule], note: "berjalan paralel dengan RAG & LLM; teks pertama dan aksi tulis menunggu verdict ini" }, lg.blocked ? "WARNING" : "DEFAULT");
+    return lg;
+  });
   bag.retrieval = retrieve(env.AI, env.VECTORIZE, env.EMBED_MODEL, redacted);
   const ruleIntent = classifyIntent(state.userText, state.persona as Persona);
-  if (ruleIntent === "lain" && env.KENARI_API_KEY && redacted.trim().split(/\s+/).length >= 4) {
-    bag.llmIntent = classifyIntentLLM(env.KENARI_API_KEY, redacted, env.KENARI_CHAT_MODEL, INTENT_LLM_TIMEOUT_MS);
+  if (ruleIntent === "lain" && redacted.trim().split(/\s+/).length >= 4) {
+    bag.llmIntent = classifyIntentFast(env.AI, env.KENARI_API_KEY, redacted, env.KENARI_CHAT_MODEL, INTENT_LLM_BUDGET_MS);
   }
-
-  const lg = await bag.llamaGuard;
-  const lgCall: XrayCall = { kind: "model", name: env.MODEL_GUARD.replace(/^@cf\//, ""), args: "pesan teredaksi", result: lg.blocked ? `unsafe → blok (${lg.reason?.slice(0, 40)})` : lg.source === "none" ? lg.reason ?? "tidak tersedia → fail-open" : lg.reason ? `observasi: ${lg.reason}` : "safe", ms: lg.ms, atMs: startedAt };
-  if (lg.blocked) {
-    rules.push({ rule: "Llama Guard 3", result: "blok", detail: lg.reason?.slice(0, 80) });
-    audit(bag, env.DB, state.sessionId, "system", "guard_block", { layer: "llama_guard", reason: lg.reason });
-    span?.end({ blocked: true, layer: "llama_guard", technique: techs(TECH.injectionRegex, TECH.piiRedaction, TECH.llamaGuard), calls: [lgCall], guards: rules }, "WARNING");
-    return { blockedByGuard: "llama_guard", instantDelivery: true, finalText: "Maaf, pesan Anda terdeteksi tidak aman untuk diproses otomatis. Saya alihkan ke CS manusia." };
-  }
-  rules.push({ rule: "Llama Guard 3", result: lg.source === "none" ? "lewati" : "lolos", detail: lg.source === "none" ? "fail-open (aturan deterministik tetap berlaku)" : undefined });
+  rules.push({ rule: "Llama Guard 3", result: "catat", detail: "berjalan paralel — teks pertama & aksi tulis menunggu verdict" });
 
   span?.end({
     blocked: false,
     piiRedactedCount: matches.length,
-    technique: techs(TECH.injectionRegex, TECH.dataIntegrity, TECH.privacyExfil, TECH.scope, TECH.piiRedaction, TECH.llamaGuard, TECH.parallel),
-    calls: [lgCall],
+    technique: techs(TECH.injectionRegex, TECH.dataIntegrity, TECH.privacyExfil, TECH.scope, TECH.piiRedaction, TECH.parallel),
     guards: rules,
     parallel: ["llama_guard", "rag_retrieval", ...(bag.llmIntent ? ["intent_llm"] : [])],
   });
@@ -350,7 +365,7 @@ async function nodeRouteIntent(state: State, config: any): Promise<Partial<State
     const at = since(state);
     const llm = await bag.llmIntent;
     technique.push(TECH.intentLLM);
-    calls.push({ kind: "model", name: `kenari:${llm?.model ?? env.KENARI_CHAT_MODEL ?? "?"}`, args: "pesan teredaksi + 3 contoh few-shot", result: llm ? `intent: ${llm.intent}` : "timeout/gagal → tetap 'lain'", ms: llm?.ms, tokIn: llm?.usage?.input, tokOut: llm?.usage?.output, atMs: at });
+    calls.push({ kind: "model", name: llm ? (llm.model.startsWith("@cf/") ? llm.model.replace(/^@cf\//, "") : `kenari:${llm.model}`) : "Workers AI 8B ∥ Kenari (lomba)", args: "pesan teredaksi + 3 contoh few-shot", result: llm ? `intent: ${llm.intent}` : `tidak ada jawaban valid dalam ${INTENT_LLM_BUDGET_MS} ms → tetap 'lain'`, ms: llm?.ms ?? INTENT_LLM_BUDGET_MS, tokIn: llm?.usage?.input, tokOut: llm?.usage?.output, atMs: at });
     if (llm && llm.intent !== "lain") {
       // Intent kepatuhan mitra-only tetap tunduk pada persona (sama seperti aturan).
       const mitraOnly = llm.intent === "keterlambatan" || llm.intent === "pengajuan";
@@ -364,13 +379,22 @@ async function nodeRouteIntent(state: State, config: any): Promise<Partial<State
   const hitl = detectHitl(state.userText, state.failedUnderstandingCount, explicitHumanRequest);
   technique.push(TECH.hitl);
 
+  // Aksi TULIS (tiket/DSR/restru) hanya setelah verdict Llama Guard aman.
+  const willWrite = intent === "pengaduan" || intent === "hak_data" || (intent === "keterlambatan" && state.persona === "mitra" && !!state.verifiedActorId);
+  if (willWrite && !(await llamaGate(bag))) {
+    span?.end({ intent, intentSource, blocked: true, layer: "llama_guard", technique, calls, note: "aksi tulis dibatalkan: Llama Guard menandai pesan tidak aman" }, "WARNING");
+    return { intent, blockedByGuard: "llama_guard", instantDelivery: true, finalText: LLAMA_BLOCK_TEXT };
+  }
+
   let autoTicket: any = null;
   const extraToolCalls: { tool: string; ok: boolean }[] = [];
   const runAction = async (tool: ToolName, args: Record<string, any>, actorType: "mitra" | "pendana") => {
     const t0 = Date.now();
     const at = since(state);
     const result = await executeTool(env.DB, tool, args, { verifiedActorId: state.verifiedActorId, actorType, sessionId: state.sessionId });
-    calls.push({ kind: "tool", name: tool, args: maskArgs(Object.fromEntries(Object.entries(args).map(([k, v]) => [k, typeof v === "string" ? v.slice(0, 40) : v]))), result: summarizeToolResult(tool, result), ms: Date.now() - t0, atMs: at });
+    // Teks bebas (subjek/deskripsi/alasan) TIDAK ditampilkan — hanya kunci + panjang; field enum apa adanya.
+    const shown = Object.fromEntries(Object.entries(args).map(([k, v]) => [k, typeof v === "string" && v.length > 24 ? `(teks ${v.length} karakter)` : v]));
+    calls.push({ kind: "tool", name: tool, args: maskArgs(shown), result: summarizeToolResult(tool, result), ms: Date.now() - t0, atMs: at });
     return result;
   };
   if (intent === "pengaduan") {
@@ -486,7 +510,9 @@ async function nodeTools(state: State, config: any): Promise<Partial<State>> {
   calls.push({ kind: "vector", name: rag.method === "vector" ? `${env.EMBED_MODEL.replace(/^@cf\//, "")} + Vectorize` : "BM25 lokal (fallback)", args: `top-k 6, ambang ${rag.method === "vector" ? "0.45" : "1.5"}`, result: `${chunks.length}/${rag.considered.length} dokumen lolos ambang${rag.fallbackReason ? ` · fallback: ${rag.fallbackReason}` : ""}`, ms: rag.ms, atMs: Math.max(0, ragWaitAt - rag.ms) });
   bag.ragDetail = {
     method: rag.method,
-    query: state.redacted.slice(0, 160),
+    // Bukan teks kueri (review Opus P2: nama/alamat/tanggal format tak dikenal bisa lolos redaksi) —
+    // hanya panjang + jenis token redaksi yang ada.
+    query: `pesan teredaksi (${state.redacted.length} karakter${(state.redacted.match(/\[[A-Z_]+_\d+\]/g) ?? []).length ? `, token: ${[...new Set((state.redacted.match(/\[([A-Z_]+)_\d+\]/g) ?? []).map((t) => t.replace(/_\d+\]$/, "]")))].join(" ")}` : ""})`,
     embedMs: rag.embedMs,
     queryMs: rag.queryMs,
     ms: rag.ms,
@@ -539,6 +565,7 @@ async function nodeTools(state: State, config: any): Promise<Partial<State>> {
     },
     replace: async (t, reason) => sink?.replace(t, reason),
     parseJson: (raw) => extractAnswerFallback(raw),
+    gate: () => llamaGate(bag),
   });
 
   // 3) ReAct HANYA bila LLM perlu memilih tool sendiri: identitas belum terverifikasi tapi pesan
@@ -548,6 +575,12 @@ async function nodeTools(state: State, config: any): Promise<Partial<State>> {
   let modelUsed = "none";
   let streamInfo: Record<string, unknown> | undefined;
 
+  if (needsReact && !(await llamaGate(bag))) {
+    bag.guardOutSpan?.end({ skipped: true, reason: "Llama Guard memblokir sebelum ReAct" });
+    bag.guardOutSpan = undefined;
+    span?.end({ blocked: true, layer: "llama_guard", technique, calls, rag: bag.ragDetail }, "WARNING");
+    return { blockedByGuard: "llama_guard", instantDelivery: true, finalText: LLAMA_BLOCK_TEXT, retrievedIds: [...retrievedIds], usedRag };
+  }
   if (needsReact) {
     technique.push(TECH.react);
     const messages: ChatMessage[] = [
@@ -576,7 +609,7 @@ async function nodeTools(state: State, config: any): Promise<Partial<State>> {
       const def = TOOL_REGISTRY[toolName];
       const thought = sanitizeThought(parsed.thought);
       if (!def) {
-        react.push({ step: step + 1, thought, action: String(parsed.tool ?? "?"), observation: "tool tidak dikenal", ms: llmRes.ms });
+        react.push({ step: step + 1, thought, action: safeToolName(parsed.tool, TOOL_REGISTRY), observation: "tool tidak dikenal", ms: llmRes.ms });
         messages.push({ role: "assistant", content: llmRes.text });
         messages.push({ role: "user", content: buildToolResultTurn(parsed.tool ?? "unknown", JSON.stringify({ ok: false, error: "tool tidak dikenal" })) });
         continue;
@@ -646,10 +679,13 @@ async function nodeTools(state: State, config: any): Promise<Partial<State>> {
       { role: "user", content: buildStreamingAnswerTurn(state.redacted, ragContext, toolData.length ? toolData.join("\n\n") : null, guidance) },
     ];
     const at = since(state);
+    const raceEnabled = bag.budget.allowRace();
     const res = await streamChatModel(env.AI, env.MODEL_PRIMARY, messages, (d) => bag.streamGuard!.push(d), {
       kenariApiKey: env.KENARI_API_KEY,
       kenariModel: env.KENARI_CHAT_MODEL,
-      hedgeAfterMs: Number(env.LLM_HEDGE_AFTER_MS ?? 1800),
+      kenariHedgeModel: env.KENARI_HEDGE_MODEL,
+      hedgeAfterMs: Number(env.LLM_HEDGE_AFTER_MS ?? 1500),
+      workersAfterMs: raceEnabled ? Number(env.WORKERS_AI_RACE_AFTER_MS ?? env.LLM_HEDGE_AFTER_MS ?? 1500) : -1,
       max_tokens: 700,
     });
     modelUsed = res.modelUsed;
@@ -665,7 +701,16 @@ async function nodeTools(state: State, config: any): Promise<Partial<State>> {
         atMs: at + a.startedAtMs,
       });
     }
-    streamInfo = { ttftMs: res.ttftMs, hedged: res.hedged, winner: res.modelUsed };
+    const winnerAttempt = res.attempts.find((a) => a.outcome === "menang");
+    const losers = res.attempts.filter((a) => a !== winnerAttempt);
+    const reason = !winnerAttempt
+      ? "tidak ada penyedia yang menghasilkan teks → pesan aman standar"
+      : !raceEnabled && winnerAttempt.provider === "kenari"
+        ? `Workers AI tidak ikut balapan: perkiraan pemakaian hari ini ${Math.round(bag.budget.used)}/${RACE_CAP} neuron (cap biaya nol)`
+        : losers.length
+          ? `token pertama paling cepat (${(winnerAttempt.startedAtMs ?? 0) + (winnerAttempt.ttftMs ?? 0)} ms) vs ${losers.map((l) => `${l.provider === "kenari" ? l.model : "Workers AI"}: ${l.outcome}`).join(", ")}`
+          : "satu-satunya kandidat yang dijalankan (lainnya belum sempat mulai)";
+    streamInfo = { ttftMs: res.ttftMs, hedged: res.hedged, winner: res.modelUsed, reason, candidates: res.candidates, workersAiBudget: { neuronsToday: Math.round(bag.budget.used), raceCap: RACE_CAP, raceEnabled } };
     audit(bag, env.DB, state.sessionId, "ai", "llm_call", { step: 0, model: res.modelUsed, degraded: res.degraded, streaming: true, hedged: res.hedged });
     trace?.generation("llm_stream_answer", res.modelUsed, messages[messages.length - 1], res.text ?? "", res.usage);
     if (!res.text) await bag.streamGuard.push(FALLBACK_NOT_FOUND);
@@ -696,7 +741,7 @@ async function nodeGuardOut(state: State, config: any): Promise<Partial<State>> 
   const sg = bag.streamGuard!;
   const r = await sg.finish();
   let finalText = r.text;
-  const blockedByGuard = r.blockedBy;
+  const blockedByGuard = r.blockedBy === "input_unsafe" ? "llama_guard" : r.blockedBy;
   if (blockedByGuard) audit(bag, env.DB, state.sessionId, "system", "output_guard_block", { reason: blockedByGuard, replaced: r.replaced });
 
   // Baris sistem (bukan LLM) — dikirim sebagai potongan tambahan setelah jawaban.
@@ -709,6 +754,8 @@ async function nodeGuardOut(state: State, config: any): Promise<Partial<State>> 
     if (bag.firstTokenAt === undefined) bag.firstTokenAt = Date.now();
     await bag.sink?.text(e);
   }
+  // Bubble sudah diganti (replace) -> pengganti harus ikut memuat baris tiket/DSR/restru (review Opus).
+  if (r.replaced && extras.length) await bag.sink?.replace(finalText, r.blockedBy ?? "sitasi_wajib");
   const citations = blockedByGuard ? [] : [...new Set([...finalText.matchAll(/\[([a-z0-9-]+#[a-z0-9-]+)\]/gi)].map((m) => m[1].toLowerCase()))];
   const rules: XrayGuardRule[] = [
     ...r.rules,
@@ -738,6 +785,8 @@ async function nodeRespond(state: State, config: any): Promise<Partial<State>> {
     bag.firstTokenAt = Date.now();
     await bag.sink?.text(state.finalText);
   }
+  await bag.llamaGuard; // (sudah selesai/≤ timeout) supaya span Llama Guard lengkap sebelum giliran ditutup
+  await bag.budget.flush();
   const auditStart = Date.now();
   audit(bag, env.DB, state.sessionId, "ai", "output", { text_len: state.finalText.length, citations: state.citations, intent: state.intent });
   await bag.auditQ;
@@ -765,8 +814,8 @@ function buildGraph() {
     .addEdge(START, "guard_in")
     .addConditionalEdges("guard_in", (s: State) => (s.blockedByGuard ? "respond" : "verify_identity"), ["respond", "verify_identity"])
     .addEdge("verify_identity", "route_intent")
-    .addConditionalEdges("route_intent", (s: State) => (s.handoffTriggered ? "respond" : "tools"), ["respond", "tools"])
-    .addConditionalEdges("tools", (s: State) => (s.handoffTriggered ? "respond" : "guard_out"), ["respond", "guard_out"])
+    .addConditionalEdges("route_intent", (s: State) => (s.handoffTriggered || s.blockedByGuard ? "respond" : "tools"), ["respond", "tools"])
+    .addConditionalEdges("tools", (s: State) => (s.handoffTriggered || s.blockedByGuard ? "respond" : "guard_out"), ["respond", "guard_out"])
     .addEdge("guard_out", "respond")
     .addEdge("respond", END);
   return graph.compile();
@@ -834,9 +883,14 @@ export async function runAgentGraph(env: AgentEnvBindings, input: AgentTurnInput
     firstTokenMs: null,
     totalMs: 0,
   };
-  const bag: RunBag = { sink, auditQ: Promise.resolve() };
+  // Anggaran neuron Workers AI harian (cap biaya nol, aiBudget.ts): dibaca sekali per giliran; binding AI
+  // dibungkus supaya SETIAP panggilan dicek & dicatat. Balapan Qwen + klasifikasi cadangan = opsional.
+  const budget = new WorkersAiBudget(env.DB);
+  await budget.load();
+  const meteredEnv: AgentEnvBindings = { ...env, AI: meteredAi(env.AI, budget, new Set([env.MODEL_PRIMARY, "@cf/meta/llama-3.1-8b-instruct-fast"])) };
+  const bag: RunBag = { sink, auditQ: Promise.resolve(), budget };
 
-  const final = (await COMPILED_GRAPH.invoke(initial, { configurable: { env, trace, bag } })) as State;
+  const final = (await COMPILED_GRAPH.invoke(initial, { configurable: { env: meteredEnv, trace, bag } })) as State;
 
   return {
     answerText: final.finalText,
