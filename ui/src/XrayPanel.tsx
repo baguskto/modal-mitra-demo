@@ -13,10 +13,11 @@ export interface XrayEv {
   data: any;
 }
 
-const PHASES = ["lang_detect", "guard_in", "verify_identity", "route_intent", "tools", "guard_out", "respond"] as const;
+const PHASES = ["lang_detect", "guard_in", "llama_guard", "verify_identity", "route_intent", "tools", "guard_out", "respond"] as const;
 const LABEL: Record<string, string> = {
   lang_detect: "0· Deteksi bahasa",
   guard_in: "1· Guard In",
+  llama_guard: "1b· Llama Guard (paralel)",
   verify_identity: "2· Verify",
   route_intent: "3· Route Intent",
   tools: "4· Tools (RAG · tool · LLM)",
@@ -40,6 +41,8 @@ function summary(node: string, d: any): string {
       return `${d.language ?? "-"}${typeof d.confidence === "number" ? ` (${Math.round(d.confidence * 100)}%)` : ""}`;
     case "guard_in":
       return `lolos · ${d.piiRedactedCount ?? 0} PII diredaksi${d.parallel ? ` · paralel: ${d.parallel.length}` : ""}`;
+    case "llama_guard":
+      return d.calls?.[0]?.result ?? "selesai";
     case "verify_identity":
       return d.verified ? "terverifikasi ✓" : d.skipped ? "dilewati" : "tidak cocok";
     case "route_intent":
@@ -156,7 +159,10 @@ function PhaseDetail({ p, citedIds }: { p: PhaseView; citedIds: Set<string> }) {
       {d.stream && (
         <div className="xr-sec">
           <div className="xr-sec-title">Streaming</div>
-          <div className="xr-kv"><span>pemenang</span>{d.stream.winner}{d.stream.hedged ? " (hedged)" : ""}</div>
+          <div className="xr-kv"><span>pemenang</span>{d.stream.winner}{d.stream.hedged ? " (balapan)" : ""}</div>
+          {d.stream.reason && <div className="xr-kv"><span>alasan</span>{d.stream.reason}</div>}
+          {d.stream.candidates && <div className="xr-kv"><span>kandidat</span><code>{d.stream.candidates.join(" · ")}</code></div>}
+          {d.stream.workersAiBudget && <div className="xr-kv"><span>kuota WAI</span>{d.stream.workersAiBudget.neuronsToday}/{d.stream.workersAiBudget.raceCap} neuron hari ini · balapan {d.stream.workersAiBudget.raceEnabled ? "aktif" : "mati (cap biaya nol)"}</div>}
           {d.stream.ttftMs !== undefined && <div className="xr-kv"><span>token pertama model</span>{d.stream.ttftMs} ms sejak panggilan</div>}
         </div>
       )}

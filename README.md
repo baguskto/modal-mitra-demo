@@ -148,7 +148,7 @@ Latensi (`npm run latency`, 6 skenario × 3 repetisi) — lihat `evals/latency-r
 
 | Keputusan | Alasan / trade-off |
 |---|---|
-| **Streaming = relay pasca-guard, bukan token mentah model** | *(v1, tidak berubah)* Workers AI `stream:true` untuk `@cf/qwen/qwen3-30b-a3b-fp8` terbukti merusak JSON; non-streaming + relay per-kata ke klien via `UIMessageStream` manual (`text-start`/`text-delta`/`text-end`) tetap memberi UX "mengalir" real-time secara transport. |
+| **Streaming NYATA per kalimat yang sudah lolos guard** (feat/latency-xray, §15) | *Menggantikan* "relay pasca-guard" v1 (yang membuat first-token = total, 20.8 s pada kasus 2 Nov). Jawaban akhir kini teks polos (bukan JSON) yang di-stream; `StreamGuard` menahan tiap kalimat sampai batas kalimat, menjalankan aturan guard_out yang sama, baru meneruskannya. Metadata (sitasi/intent/xray) dikirim sebagai part `data-meta` terpisah di akhir. |
 | **LangGraph Zod state, bukan `Annotation.Root`** | Native sejak `@langchain/langgraph` 0.2.5x+; satu skema dipakai untuk validasi+tipe, konsisten dengan Zod di `tools/schemas.ts` — padanan langsung Pydantic. |
 | **Klien Langfuse kustom (fetch), bukan SDK resmi** | Model eksekusi Workers (request-scoped, `ctx.waitUntil`) tidak cocok dengan asumsi SDK Node (buffer+timer long-lived) — lihat §5.1. |
 | **Kenari sebagai provider utama SEMENTARA** | Insiden kuota Workers AI real-time saat migrasi, diukur langsung (latensi sebanding, embedding dimensi identik) — lihat §0.1. Dirancang agar tinggal dibalik setelah kuota reset. |
@@ -341,3 +341,24 @@ Dikerjakan paralel di branch `feat/extras` (worktree terpisah, `src/extras/*`, `
 **Skema X-Ray extras** (§8.1 untuk detail adapter): `src/extras/xray.ts` `ExtrasXrayEvent` (`{type, at, sessionId?, data}`) — tipe event: `stt`, `tts`, `lang_detect`, `cache_hit`/`cache_miss`, `route`, `sla_timer`/`sla_escalated`, `memory_read`/`memory_write`/`memory_deleted`, `prompt_fetch`, `online_eval`.
 
 **D1 tambahan** (sudah di-migrasi ke remote, idempotent): `sla_escalations` (hasil keputusan tiap workflow run), `long_term_memory` (consent + ringkasan, kosong/tidak terpakai selama fitur #5 OFF).
+
+---
+
+## 15. feat/latency-xray — balasan cepat (streaming nyata) + X-Ray detail per fase (2 Nov 2026)
+
+Pemicu: pesan nyata di demo "aduh maap bu kemarin blm bisa bayar angsuran, gimana ya" → first-token = total = **20.8 s**, intent salah `lain`, Tools "0 langkah", X-Ray hanya "selesai". Laporan lengkap (angka sebelum/sesudah, pemilihan model, desain streaming aman, runbook): `projects/interview-prep/latency-xray-report.md` (lokal orkestrator).
+
+**Penyebab** (diukur per fase, harness `scripts/measure-golden.ts`): (1) seluruh graph selesai DULU baru stream dibuat → tidak ada streaming nyata; (2) 1–3 putaran LLM ReAct berurutan bahkan untuk "cek angsuran" (verify → lookup → final); (3) Llama Guard & embedding berurutan; (4) TTFT Kenari bervariasi besar (gpt-6-1-terra sempat `all_providers_failed`); (5) regex intent tidak mengenal "blm bisa bayar".
+
+**Perubahan utama**
+| Area | Sekarang |
+|---|---|
+| Streaming | Graph berjalan DI DALAM `createUIMessageStream`; teks per kalimat yang lolos `StreamGuard` (`src/guards/streamGuard.ts`) langsung jadi `text-delta`; pelanggaran setelah sebagian tampil → part `data-guard` (replace). Normalisasi (NFKC, zero-width, markdown, tanda hubung unicode) sebelum cek pola. |
+| Paralel | guard_in hanya aturan deterministik; Llama Guard, retrieval, klasifikasi cadangan dimulai bersamaan. Verdict Llama Guard = GERBANG sebelum teks pertama tampil & sebelum aksi tulis apa pun. Audit log lewat antrean berurutan di luar jalur kritis. |
+| Tool/ReAct | Auto-verify dua faktor mitra & pendana; data akun yang pasti dibutuhkan intent di-prefetch deterministik; ReAct JSON hanya bila LLM perlu memilih tool (identitas disebut tapi pola belum lengkap). |
+| Model | Kenari `gpt-6-luna` (plan, `reasoning_effort: none`) + hedge `deepseek-v4-1-flash` (plan, upstream berbeda) @1.5 s + Workers AI Qwen3 balapan sejak 0 ms — dibatasi **anggaran neuron harian di kode** (`src/agent/aiBudget.ts`: ≥8.000 neuron/hari UTC balapan Workers AI mati, ≥9.500 semua Workers AI berhenti). Pemenang token pertama dipakai, yang kalah di-abort. |
+| RAG | Embedding Workers AI `@cf/baai/bge-m3` (ruang vektor sama dengan ingest) — **embedding Kenari dihapus** (bge-m3 Kenari = PAYG, di luar scope_models Studio); timeout → BM25 lokal (`src/agent/kbCorpus.ts`). |
+| Intent | Regex informal diperluas (`router.ts`) + cadangan LLM few-shot (Workers AI 8B ∥ Kenari, anggaran 1.2 s) bila aturan = `lain`. |
+| X-Ray | `ui/src/XrayPanel.tsx`: waterfall semua fase + penanda first-token, kartu per fase (buka/tutup) berisi teknik + penjelasan awam, model/tool (argumen di-mask, hasil = hitungan), RAG (dokumen + skor + dikutip), ReAct (Thought→Action→Observation, disanitasi), guardrail (lolos/blok/ubah), alasan pemenang balapan & kuota Workers AI; log event kronologis naik dengan durasi asli. |
+
+**Pengukuran lokal tanpa wrangler**: `scripts/measure-golden.ts` (10 pesan golden, sebelum = `main@32f80c6` di `.baseline/` vs sesudah), `scripts/run-eval-local.ts` (48 kasus golden), `scripts/e2e/xray_local.py` (Playwright replay rekaman nyata), `scripts/e2e/xray_e2e.py` (Playwright terhadap `BASE_URL` preview/produksi).

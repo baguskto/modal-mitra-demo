@@ -61,6 +61,10 @@ function main() {
   } else {
     console.log("Kolom restructuring_requests.first_approver sudah ada, skip.");
   }
+  // feat/latency-xray: penghitung neuron Workers AI harian (cap biaya nol, src/agent/aiBudget.ts).
+  // CREATE TABLE IF NOT EXISTS = idempoten; kode juga membuatnya malas bila langkah ini terlewat.
+  console.log("Memastikan tabel workers_ai_budget ada ...");
+  run(`npx wrangler d1 execute modal_mitra_db --remote --command "CREATE TABLE IF NOT EXISTS workers_ai_budget (day TEXT PRIMARY KEY, neurons REAL NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT (datetime('now')))"`);
 
   console.log("\n=== 3/5: Deploy Worker (build:ui + wrangler deploy) ===");
   run("npm run deploy");
