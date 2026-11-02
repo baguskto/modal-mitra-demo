@@ -47,5 +47,16 @@ for (const file of readdirSync(KB_DIR)) {
 }
 
 writeFileSync("data/synthetic/kb-chunks.json", JSON.stringify(chunks, null, 2));
+// feat/latency-xray: korpus yang sama di-bundle ke Worker untuk fallback BM25 lokal (src/agent/rag.ts)
+// bila embedding Workers AI/Vectorize gagal atau melewati timeout. Chunk adversarial (adv-test) ikut,
+// sama seperti di Vectorize, supaya perilaku guard terhadap injeksi tidak langsung tetap teruji.
+writeFileSync(
+  "src/agent/kbCorpus.ts",
+  `// GENERATED oleh scripts/chunk-kb.ts — jangan edit manual.\nexport interface KbChunk { chunk_ref: string; doc_id: string; heading: string; text: string; needs_verification: boolean }\nexport const KB_CHUNKS: KbChunk[] = ${JSON.stringify(
+    chunks.map((c) => ({ chunk_ref: c.chunk_ref, doc_id: c.doc_id, heading: c.heading, text: c.text, needs_verification: c.needs_verification })),
+    null,
+    1,
+  )};\n`,
+);
 console.log(`Generated ${chunks.length} chunks from KB docs.`);
 for (const c of chunks) console.log(`  ${c.chunk_ref} — ${c.heading}`);

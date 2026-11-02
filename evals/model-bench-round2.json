@@ -1,0 +1,112 @@
+{
+  "measuredAt": "2026-11-02T04:28:29.227Z",
+  "calls": 6,
+  "userText": "aduh maap bu kemarin blm bisa bayar angsuran, gimana ya",
+  "results": [
+    {
+      "model": "deepseek-v4-1-flash",
+      "kind": "answer",
+      "ok": true,
+      "ttftMs": 4140,
+      "totalMs": 5183,
+      "chars": 528,
+      "usage": {
+        "completion_tokens": 1207,
+        "prompt_tokens": 3578,
+        "prompt_tokens_details": {
+          "cached_tokens": 1527
+        },
+        "total_tokens": 4785
+      },
+      "sample": "Tidak perlu malu ya Bu, terima kasih sudah terbuka soal kendala angsurannya 😊 Kalau memang sedang berat, Ibu bisa mengajukan penjadwalan ulang atau restrukturi",
+      "citesKb": true
+    },
+    {
+      "model": "deepseek-v4-1-flash",
+      "kind": "answer",
+      "ok": true,
+      "ttftMs": 7436,
+      "totalMs": 9547,
+      "chars": 493,
+      "usage": {
+        "completion_tokens": 1179,
+        "prompt_tokens": 3573,
+        "prompt_tokens_details": {
+          "cached_tokens": 1527
+        },
+        "total_tokens": 4752
+      },
+      "sample": "Tidak perlu khawatir, Bapak/Ibu — keterlambatan bisa dibicarakan baik-baik. Kami bisa catat permintaan penjadwalan ulang atau restrukturisasi angsuran untuk dit",
+      "citesKb": true
+    },
+    {
+      "model": "deepseek-v4-1-flash",
+      "kind": "answer",
+      "ok": true,
+      "ttftMs": 1907,
+      "totalMs": 2596,
+      "chars": 525,
+      "usage": {
+        "completion_tokens": 161,
+        "prompt_tokens": 1527,
+        "prompt_tokens_details": {
+          "cached_tokens": 1527
+        },
+        "total_tokens": 1688
+      },
+      "sample": "Tidak apa-apa, Bapak/Ibu, terima kasih sudah jujur memberi tahu. Kalau angsuran kemarin belum bisa dibayar, kita bisa bicarakan opsi penjadwalan ulang atau rest",
+      "citesKb": true
+    },
+    {
+      "model": "gpt-6-luna",
+      "kind": "answer",
+      "ok": true,
+      "ttftMs": 2646,
+      "totalMs": 2954,
+      "chars": 385,
+      "usage": {
+        "completion_tokens": 97,
+        "prompt_tokens": 5757,
+        "prompt_tokens_details": {
+          "cached_tokens": 1381
+        },
+        "total_tokens": 5854
+      },
+      "sample": "Tidak apa-apa, Bu. Kalau sedang kesulitan membayar, kita bisa catat permintaan Ibu untuk membahas penjadwalan ulang atau restrukturisasi dengan petugas lapangan",
+      "citesKb": true
+    },
+    {
+      "model": "gpt-6-luna",
+      "kind": "answer",
+      "ok": true,
+      "ttftMs": 2279,
+      "totalMs": 2573,
+      "chars": 363,
+      "usage": {
+        "completion_tokens": 93,
+        "prompt_tokens": 5757,
+        "prompt_tokens_details": {
+          "cached_tokens": 3558
+        },
+        "total_tokens": 5850
+      },
+      "sample": "Tidak apa-apa, Bu. Kalau angsuran sedang sulit dibayar, kita bisa mencatat permintaan untuk membahas penjadwalan ulang atau restrukturisasi dengan petugas lapan",
+      "citesKb": true
+    },
+    {
+      "model": "gpt-6-1-terra",
+      "kind": "answer",
+      "ok": true,
+      "ttftMs": 9718,
+      "totalMs": 9762,
+      "chars": 343,
+      "usage": {
+        "completion_tokens": 89,
+        "prompt_tokens": 1381,
+        "total_tokens": 1470
+      },
+      "sample": "Tidak apa-apa, Bu, terima kasih sudah memberi tahu. Kita bisa membahas opsi penjadwalan ulang atau restrukturisasi, lalu permintaannya dicatat untuk ditinjau pe",
+      "citesKb": true
+    }
+  ]
+}

@@ -54,6 +54,12 @@ MODEL_PRIMARY = "@cf/qwen/qwen3-30b-a3b-fp8"
 MODEL_GUARD = "@cf/meta/llama-guard-3-8b"
 EMBED_MODEL = "@cf/baai/bge-m3"
 LANGFUSE_BASE_URL = "https://jp.cloud.langfuse.com"
+# feat/latency-xray — model chat Kenari (WAJIB anggota scope_models paket Studio + terbukti billing
+# "plan"; nilai lain jatuh ke default gpt-6-luna, lihat src/agent/kenari.ts PLAN_MODELS) dan ambang
+# hedged request: bila Kenari belum memberi token pertama setelah N ms, Workers AI (MODEL_PRIMARY)
+# dijalankan paralel, pemenang token pertama dipakai (src/agent/llm.ts streamChatModel).
+KENARI_CHAT_MODEL = "gpt-6-luna"
+LLM_HEDGE_AFTER_MS = "1800"
 
 # feat/extras — toggle fitur tambahan (lihat src/extras/config.ts), aman dimatikan tanpa redeploy
 # kode. Secret (KENARI_API_KEY, LANGFUSE_*) SELALU lewat `wrangler secret put`, TIDAK di [vars].

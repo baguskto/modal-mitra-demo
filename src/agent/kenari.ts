@@ -1,67 +1,152 @@
-// Klien Kenari (OmniRoute) — proxy OpenAI-compatible (chat/completions + embeddings) milik
-// Bagus sendiri (paket Studio, kuota bulanan Rp1,2 juta, TERPISAH dari project lain). Dipakai
-// sebagai provider UTAMA saat ini (lihat README §Keputusan Desain "Kenari vs Workers AI") karena
-// kuota gratis Workers AI akun Markas Auracheck habis untuk hari ini (error 4006) tepat saat
-// migrasi ini dikerjakan — keputusan diambil setelah DIUKUR langsung: latensi gpt-6-1-terra untuk
-// balasan JSON pendek ~1-2s (sebanding Workers AI saat sehat), endpoint /v1/embeddings Kenari
-// mengembalikan model "bge-m3" dengan dimensi 1024 — IDENTIK dengan index Vectorize yang sudah
-// ada, jadi bisa dipakai langsung tanpa migrasi index. Workers AI tetap dicoba LEBIH DULU di setiap
-// panggilan (gratis saat sehat) -> Kenari hanya aktif sebagai fallback kedua, KECUALI untuk periode
-// migrasi ini di mana Workers AI sedang 100% habis sehingga secara praktis Kenari yang melayani
-// mayoritas trafik -> dicatat jujur, bukan diam-diam.
+// Klien Kenari (OmniRoute) — proxy OpenAI-compatible milik Bagus sendiri (paket Studio). Dipakai
+// sebagai provider chat UTAMA (lihat README §0.1 untuk insiden kuota Workers AI yang memicu ini).
 //
-// Model yang DIPAKAI (paket Studio): gpt-6-1-terra (chat utama, JSON bersih tanpa reasoning
-// overhead — diuji langsung, deepseek-v4-1-flash mengeluarkan token "reasoning" berlebihan untuk
-// tugas tool-calling pendek ini). gpt-6-astra SENGAJA TIDAK dipakai (ditagih PAYG terpisah, saldo
-// kecil, bukan bagian paket Studio).
+// feat/latency-xray (2 Nov 2026):
+//  - Model chat sekarang dipilih lewat `KENARI_CHAT_MODEL` (wrangler.toml [vars]) dengan default
+//    DEFAULT_CHAT_MODEL di bawah — dipilih setelah DIUKUR (scripts/bench-models.ts, evals/model-bench.json),
+//    HANYA dari scope_models paket Studio yang terbukti `billing_kind: "plan"` di GET /v1/usage hari itu.
+//  - `reasoning_effort` dikirim eksplisit ("none" untuk keluarga gpt-6): tugas CS ini tidak butuh
+//    reasoning tersembunyi, dan token reasoning adalah sumber utama latensi first-token.
+//  - Streaming (`kenariChatStream`): token jawaban akhir diteruskan ke UI sambil di-guard per kalimat
+//    (src/guards/streamGuard.ts) — bukan lagi relay buatan setelah seluruh jawaban selesai.
+//  - kenariEmbed DIHAPUS: model `bge-m3` di Kenari TIDAK ada di scope_models paket Studio -> ditagih
+//    PAYG (terlihat di GET /v1/usage 2 Nov: bge-m3 billing_kind "payg", cost > 0). Embedding RAG
+//    sekarang Workers AI @cf/baai/bge-m3 (dimensi 1024 sama) + fallback BM25 lokal (src/agent/rag.ts).
+//  - gpt-6-astra SENGAJA TIDAK dipakai (PAYG terpisah, bukan bagian paket Studio).
 
 const KENARI_BASE_URL = "https://kenari.id/v1";
-export const KENARI_CHAT_MODEL = "gpt-6-1-terra";
-export const KENARI_EMBED_MODEL = "bge-m3";
+export const DEFAULT_CHAT_MODEL = "gpt-6-luna";
+
+/** Model yang BOLEH dipakai (scope_models Studio + terbukti plan). Nilai lain -> default (fail-safe ke plan). */
+const PLAN_MODELS: Record<string, { reasoning?: string }> = {
+  "gpt-6-luna": { reasoning: "none" },
+  "gpt-6-1-terra": { reasoning: "none" },
+  "deepseek-v4-1-flash": { reasoning: "none" },
+  "gemini-3-7-flash": { reasoning: "low" },
+};
+
+export function resolveKenariModel(requested?: string): string {
+  return requested && PLAN_MODELS[requested] ? requested : DEFAULT_CHAT_MODEL;
+}
+
+export interface KenariUsage {
+  input?: number;
+  output?: number;
+}
+
+export interface KenariResult {
+  text: string | null;
+  model: string;
+  usage?: KenariUsage;
+  ms: number;
+  ttftMs?: number;
+}
+
+function body(model: string, messages: { role: string; content: string }[], opts: { temperature?: number; max_tokens?: number }, stream: boolean) {
+  const reasoning = PLAN_MODELS[model]?.reasoning;
+  return JSON.stringify({
+    model,
+    messages,
+    temperature: opts.temperature ?? 0.2,
+    max_tokens: opts.max_tokens ?? 1024, // WAJIB diset eksplisit (instruksi Bagus) -> batasi biaya per panggilan.
+    ...(reasoning ? { reasoning_effort: reasoning } : {}),
+    ...(stream ? { stream: true, stream_options: { include_usage: true } } : {}),
+  });
+}
+
+function usageOf(u: any): KenariUsage | undefined {
+  if (!u) return undefined;
+  return { input: u.prompt_tokens, output: u.completion_tokens };
+}
 
 export async function kenariChatCompletion(
   apiKey: string,
   messages: { role: string; content: string }[],
-  opts: { temperature?: number; max_tokens?: number } = {},
-): Promise<string | null> {
+  opts: { temperature?: number; max_tokens?: number; model?: string; signal?: AbortSignal } = {},
+): Promise<KenariResult> {
+  const model = resolveKenariModel(opts.model);
+  const t0 = Date.now();
   try {
     const res = await fetch(`${KENARI_BASE_URL}/chat/completions`, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model: KENARI_CHAT_MODEL,
-        messages,
-        temperature: opts.temperature ?? 0.2,
-        max_tokens: opts.max_tokens ?? 1536, // WAJIB diset eksplisit (instruksi Bagus) -> batasi biaya per panggilan.
-      }),
+      body: body(model, messages, opts, false),
+      signal: opts.signal,
     });
     if (!res.ok) {
       console.error("kenari_chat_http_error", res.status, (await res.text()).slice(0, 300));
-      return null;
+      return { text: null, model, ms: Date.now() - t0 };
     }
     const data: any = await res.json();
-    return data?.choices?.[0]?.message?.content ?? null;
+    return { text: data?.choices?.[0]?.message?.content ?? null, model, usage: usageOf(data?.usage), ms: Date.now() - t0 };
   } catch (err: any) {
     console.error("kenari_chat_error", err?.message ?? String(err));
-    return null;
+    return { text: null, model, ms: Date.now() - t0 };
   }
 }
 
-export async function kenariEmbed(apiKey: string, text: string): Promise<number[] | null> {
+/**
+ * Streaming chat completion (SSE OpenAI-compatible). `onDelta` dipanggil per potongan teks segera
+ * setelah tiba — pemanggil (graph.ts) meneruskannya ke StreamGuard, BUKAN langsung ke pengguna.
+ * Tidak pernah melempar: error jaringan/HTTP -> `text: null` (pemanggil jatuh ke jalur fallback).
+ */
+export async function kenariChatStream(
+  apiKey: string,
+  messages: { role: string; content: string }[],
+  onDelta: (delta: string) => void | Promise<void>,
+  opts: { temperature?: number; max_tokens?: number; model?: string; signal?: AbortSignal } = {},
+): Promise<KenariResult> {
+  const model = resolveKenariModel(opts.model);
+  const t0 = Date.now();
+  let ttftMs: number | undefined;
+  let text = "";
+  let usage: KenariUsage | undefined;
   try {
-    const res = await fetch(`${KENARI_BASE_URL}/embeddings`, {
+    const res = await fetch(`${KENARI_BASE_URL}/chat/completions`, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ model: KENARI_EMBED_MODEL, input: text }),
+      body: body(model, messages, opts, true),
+      signal: opts.signal,
     });
-    if (!res.ok) {
-      console.error("kenari_embed_http_error", res.status, (await res.text()).slice(0, 300));
-      return null;
+    if (!res.ok || !res.body) {
+      console.error("kenari_stream_http_error", res.status, (await res.text()).slice(0, 300));
+      return { text: null, model, ms: Date.now() - t0 };
     }
-    const data: any = await res.json();
-    return data?.data?.[0]?.embedding ?? null;
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      if (opts.signal?.aborted) {
+        await reader.cancel().catch(() => {});
+        break;
+      }
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.startsWith("data:")) continue;
+        const payload = line.slice(5).trim();
+        if (!payload || payload === "[DONE]") continue;
+        let j: any;
+        try {
+          j = JSON.parse(payload);
+        } catch {
+          continue;
+        }
+        const d = j?.choices?.[0]?.delta?.content;
+        if (typeof d === "string" && d.length > 0) {
+          if (ttftMs === undefined) ttftMs = Date.now() - t0;
+          text += d;
+          await onDelta(d);
+        }
+        if (j?.usage) usage = usageOf(j.usage);
+      }
+    }
+    return { text: text || null, model, usage, ms: Date.now() - t0, ttftMs };
   } catch (err: any) {
-    console.error("kenari_embed_error", err?.message ?? String(err));
-    return null;
+    if (!opts.signal?.aborted) console.error("kenari_stream_error", err?.message ?? String(err));
+    return { text: text || null, model, usage, ms: Date.now() - t0, ttftMs };
   }
 }

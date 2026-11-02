@@ -2,32 +2,43 @@
 // sebelumnya ada di toolAgent.ts (lihat tag git `v1-pre-agents-sdk` untuk versi pra-migrasi).
 //
 // Node: guard_in -> verify_identity -> route_intent -> tools -> guard_out -> respond | handoff
-// (persis urutan yang diminta brief interview). Setiap node HANYA memanggil ulang fungsi guard/
-// router/rag/tools yang SAMA dan SUDAH lolos eval 45/45 sebelum migrasi ini — tidak ada logika
-// keamanan/kepatuhan yang ditulis ulang dari nol, hanya diorganisasi ulang jadi node graph agar
-// benar-benar auditable (bukan sekadar nama variabel "graph" di atas kode lama).
 //
-// Skema state dengan Zod (padanan Pydantic BaseModel di Python) — LangGraph.js native Zod state
-// support (StateGraph(zodSchema)) sejak @langchain/langgraph ^0.2.5x, dipakai di sini apa adanya,
-// BUKAN approximation Annotation.Root lama. Reducer default "last write wins" per key, cocok
-// karena setiap node mengembalikan hanya field yang benar-benar berubah (partial update).
+// feat/latency-xray (2 Nov 2026) — kasus nyata: "aduh maap bu kemarin blm bisa bayar angsuran, gimana
+// ya" -> first-token = total = 20.8 s, intent salah "lain", Tools "0 langkah". Perubahan:
+//  1. guard_in: cek deterministik (regex) dulu; Llama Guard, retrieval RAG, dan klasifikasi intent
+//     cadangan (model cepat) lalu berjalan PARALEL — bukan berurutan.
+//  2. verify_identity: auto-verify dua faktor untuk mitra (MMK + tgl lahir) DAN pendana (PND + tgl
+//     lahir) apa pun intent-nya — sebelumnya jalur umum "cek angsuran ..." butuh 3 putaran LLM ReAct.
+//  3. route_intent: regex informal diperluas (router.ts) + cadangan LLM few-shot bila aturan = "lain".
+//  4. tools: data akun yang pasti dibutuhkan intent diambil DETERMINISTIK (prefetch); ReAct JSON
+//     hanya dipakai bila LLM benar-benar perlu memilih tool (mis. identitas belum terverifikasi tapi
+//     pengguna menyebut nomor). Jawaban akhir = SATU panggilan LLM streaming teks polos.
+//  5. guard_out: berjalan SELAMA streaming, per kalimat (src/guards/streamGuard.ts) — teks melanggar
+//     tidak pernah sampai ke UI. Cek akhir (sitasi wajib, baris tiket/DSR/restru) di node guard_out.
+//  6. Audit log ditulis lewat antrean berurutan (hash-chain tetap urut) di luar jalur kritis, ditunggu
+//     di node respond (setelah teks selesai tampil).
+//  7. Setiap span X-Ray membawa detail: teknik, panggilan model/tool (argumen di-mask), RAG + skor,
+//     langkah ReAct, aturan guard (src/obs/xrayDetail.ts).
 import { z } from "zod";
 import { StateGraph, START, END } from "@langchain/langgraph";
 
-import { redactPII, resolveTokens, resolveLeakedTokensInText, maskPIIForHistory } from "../guards/pii";
-import { heuristicInjectionCheck, llamaGuardCheck, wrapAsData } from "../guards/injection";
+import { redactPII, resolveTokens, maskPIIForHistory } from "../guards/pii";
+import { heuristicInjectionCheck, llamaGuardCheck, wrapAsData, type InjectionResult } from "../guards/injection";
 import { checkScope } from "../guards/scope";
 import { checkDataIntegrityAbuse } from "../guards/dataIntegrity";
 import { checkThirdPartyPiiRequest } from "../guards/privacy";
-import { checkOutput, checkCitationsGrounded, checkMemberPrivacyLeak, salvageJsonTail, FALLBACK_NOT_FOUND } from "../guards/output";
+import { salvageJsonTail, FALLBACK_NOT_FOUND } from "../guards/output";
+import { StreamGuard, type GuardBlockReason } from "../guards/streamGuard";
 import { classifyIntent, detectHitl, type Intent, type Persona } from "./router";
-import { retrieve, formatChunksAsContext } from "./rag";
-import { buildSystemPrompt, buildUserTurn, buildToolResultTurn } from "./prompts";
-import { callChatModel, type ChatMessage } from "./llm";
+import { classifyIntentLLM, type LlmIntentResult } from "./classify";
+import { retrieve, formatChunksAsContext, type RetrievalResult } from "./rag";
+import { buildSystemPrompt, buildUserTurn, buildToolResultTurn, buildStreamingAnswerTurn } from "./prompts";
+import { callChatModel, streamChatModel, type ChatMessage } from "./llm";
 import { TOOL_REGISTRY, normalizeToolArgs, normalizeBirthDate, type ToolName } from "../tools/schemas";
 import { executeTool } from "../tools/execute";
 import { appendAuditLog } from "../obs/audit";
 import type { LangfuseTrace } from "../obs/langfuse";
+import { TECH, maskArgs, summarizeToolResult, sanitizeThought, type XrayCall, type XrayGuardRule, type XrayReactStep, type XrayTechnique } from "../obs/xrayDetail";
 
 export interface AgentEnvBindings {
   AI: Ai;
@@ -37,10 +48,16 @@ export interface AgentEnvBindings {
   MODEL_GUARD: string;
   EMBED_MODEL: string;
   KENARI_API_KEY?: string;
+  /** Model chat Kenari (harus anggota scope_models paket & billing plan — lihat kenari.ts PLAN_MODELS). */
+  KENARI_CHAT_MODEL?: string;
+  /** ms tanpa token pertama dari Kenari sebelum Workers AI dijalankan paralel (hedged request). */
+  LLM_HEDGE_AFTER_MS?: string;
 }
 
 // 6 — lihat catatan historis di README §Keputusan Desain (3 terlalu kecil untuk verify->lookup->final).
 const MAX_STEPS = 6;
+const LLAMA_GUARD_TIMEOUT_MS = 1500;
+const INTENT_LLM_TIMEOUT_MS = 2500;
 
 const TicketLike = z.any().nullable();
 
@@ -48,16 +65,11 @@ const AgentState = z.object({
   sessionId: z.string(),
   persona: z.enum(["mitra", "pendana", "petugas"]),
   userText: z.string(),
-  // FIX BLOCKER (temuan QA #2, "agen tanpa memori percakapan"): histori beberapa giliran
-  // terakhir (lihat ChatAgent.recentHistory), supaya agen bisa menjawab pertanyaan yang
-  // bergantung konteks ("tadi sy nanya apa aja", "iya bu" sebagai konfirmasi tawaran
-  // sebelumnya) tanpa harus mengulang semuanya di 1 pesan.
+  // FIX BLOCKER (temuan QA #2, "agen tanpa memori percakapan"): histori beberapa giliran terakhir.
   history: z.array(z.object({ role: z.enum(["user", "assistant"]), text: z.string() })).default([]),
   verifiedActorId: z.string().nullable(),
   failedUnderstandingCount: z.number().default(0),
-  // feat/extras fitur #2 (deteksi bahasa) — dihitung sekali di ChatAgent.onChatMessage sebelum
-  // graph dipanggil (heuristik murah, tanpa LLM, lihat src/extras/language/) dan ditempelkan ke
-  // system prompt di node respond (bukan field terpisah yang sengaja di-skip di sini).
+  // feat/extras fitur #2 (deteksi bahasa) — dihitung di ChatAgent sebelum graph dipanggil.
   styleInstruction: z.string().optional(),
 
   redacted: z.string().default(""),
@@ -74,14 +86,12 @@ const AgentState = z.object({
   finalText: z.string().default(""),
   citations: z.array(z.string()).default([]),
   modelUsed: z.string().default("none"),
-  // FIX (temuan QA M2): kalau TIDAK ada guard deterministik yang blokir, tapi jawaban LLM sendiri
-  // berbentuk penolakan (red-team 5/6 serangan ditolak justru oleh LLM, bukan guard) -- ditandai
-  // di sini via heuristik kata kunci (lihat looksLikeRefusal) supaya X-Ray/Red Team Arena bisa
-  // atribusi layer yang JUJUR ("LLM menolak") bukan diam-diam tampil "selesai" hijau seolah tidak
-  // ada apa pun yang terjadi.
+  // FIX (temuan QA M2): atribusi jujur "LLM menolak sendiri" (bukan guard) untuk X-Ray/Red Team.
   modelRefused: z.boolean().default(false),
   blockedByGuard: z.string().optional(),
   instantDelivery: z.boolean().default(false),
+  /** true bila guard streaming mengganti bubble yang sudah sebagian tampil (lihat streamGuard.ts). */
+  replaced: z.boolean().default(false),
 
   handoffTriggered: z.boolean().default(false),
   handoffReason: z.string().optional(),
@@ -97,12 +107,46 @@ const AgentState = z.object({
 
 type State = z.infer<typeof AgentState>;
 
+/** Penerima teks yang SUDAH lolos guard (ChatAgent -> UIMessageStream). Opsional: jalur eval HTTP tidak streaming. */
+export interface TurnSink {
+  text(delta: string): void | Promise<void>;
+  replace(text: string, reason: GuardBlockReason): void | Promise<void>;
+}
+
+/** Objek per-giliran yang TIDAK masuk state (promise paralel, guard streaming, antrean audit). */
+interface RunBag {
+  sink: TurnSink | null;
+  llamaGuard?: Promise<InjectionResult & { ms: number }>;
+  retrieval?: Promise<RetrievalResult>;
+  llmIntent?: Promise<LlmIntentResult | null>;
+  streamGuard?: StreamGuard;
+  guardOutSpan?: { end: (o?: Record<string, unknown>, level?: "DEFAULT" | "WARNING" | "ERROR") => void };
+  guardOutStartedAt?: number;
+  firstTokenAt?: number;
+  auditQ: Promise<unknown>;
+  ragDetail?: Record<string, unknown>;
+}
+
 interface RunConfigurable {
   env: AgentEnvBindings;
   trace: LangfuseTrace | null;
+  bag: RunBag;
 }
 
-function safeParseAgentJson(text: string): { type: string; text?: string; citations?: string[]; tool?: string; args?: any } | null {
+function audit(bag: RunBag, db: D1Database, sessionId: string, actor: "ai" | "system" | "human" | "user", event: string, payload: Record<string, unknown>) {
+  // Antrean berurutan: hash-chain audit tetap urut, tapi tidak menahan jalur kritis (ditunggu di respond).
+  bag.auditQ = bag.auditQ.then(() => appendAuditLog(db, sessionId, actor as any, event, payload)).catch((e) => console.error("audit_error", e?.message ?? e));
+}
+
+function since(state: State): number {
+  return Date.now() - state.turnStartedAt;
+}
+
+function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([p, new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms))]);
+}
+
+function safeParseAgentJson(text: string): { type: string; text?: string; citations?: string[]; tool?: string; args?: any; thought?: string } | null {
   if (!text) return null;
   let cleaned = text.trim();
   const fenceMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/i);
@@ -139,21 +183,12 @@ function safeParseAgentJson(text: string): { type: string; text?: string; citati
   }
 }
 
-// FIX (temuan QA MAJOR b, "JSON mentah bocor di bubble"): kalau safeParseAgentJson gagal (karena
-// escaping rusak/trailing noise dll, ~2/25 balasan di uji ulang Red Team "Tool abuse" + balasan
-// setelah release CS), SEBELUMNYA kode langsung memakai `llmRes.text` MENTAH sebagai jawaban --
-// kalau teks itu sendiri adalah fragmen JSON yang gagal parse persis, pengguna melihat
-// '...","citations":[...]}' mentah di bubble. Sekarang: coba ekstrak field "text" dengan regex
-// dulu (lebih permisif dari JSON.parse ketat); kalau TETAP terlihat seperti JSON protokol internal
-// (ada kurung kurawal + field "type"/"citations"/"tool"), JANGAN PERNAH tampilkan mentah --
-// fallback ke pesan aman standar.
-// FIX (re-test live pasca-deploy 30 Okt, M3 masih 7/21 balasan): sejak histori dikirim ke LLM
-// (fix B3), model sering MENGHILANGKAN prefiks protokol dan menulis prosa langsung, lalu menutup
-// dengan ekor JSON: 'Baik, Bu. ...","citations":["faq#1"]}'. Tidak ada "{" -> safeParseAgentJson
-// null, tidak ada "text": -> regex di bawah tidak cocok -> teks MENTAH lolos ke bubble. Ekor ini
-// dipotong & sitasinya diselamatkan (salvageJsonTail, guards/output.ts).
-function extractAnswerFallback(raw: string): { text: string; citations: string[] } {
+// FIX (temuan QA MAJOR b, "JSON mentah bocor di bubble") + re-test 30 Okt (ekor JSON): lihat riwayat
+// di tag v1/commit 32f80c6 — tidak pernah menampilkan JSON protokol mentah.
+export function extractAnswerFallback(raw: string): { text: string; citations: string[] } {
   if (!raw) return { text: FALLBACK_NOT_FOUND, citations: [] };
+  const parsed = safeParseAgentJson(raw);
+  if (parsed?.type === "final_answer" && typeof parsed.text === "string") return { text: parsed.text || FALLBACK_NOT_FOUND, citations: Array.isArray(parsed.citations) ? parsed.citations : [] };
   const m = raw.match(/"text"\s*:\s*"((?:[^"\\]|\\.)*)"/);
   if (m) {
     const cit = salvageJsonTail(raw)?.citations ?? [];
@@ -169,9 +204,7 @@ function extractAnswerFallback(raw: string): { text: string; citations: string[]
   return { text: raw, citations: [] };
 }
 
-// FIX (temuan QA M2): heuristik kata kunci penolakan Bahasa Indonesia -- BUKAN deteksi sempurna
-// (tidak ada NLU di sini), tapi cukup untuk membedakan "LLM menolak sendiri" vs "LLM menjawab
-// normal" demi atribusi layer yang jujur di X-Ray/Red Team Arena (lihat state.modelRefused).
+// FIX (temuan QA M2): heuristik kata kunci penolakan Bahasa Indonesia untuk atribusi layer yang jujur.
 const REFUSAL_PATTERNS: RegExp[] = [
   /\btidak (bisa|dapat|boleh|berwenang|diizinkan)\b/i,
   /\bmaaf,? (saya )?(tidak|tdk)\b/i,
@@ -183,133 +216,163 @@ function looksLikeRefusal(text: string): boolean {
   return REFUSAL_PATTERNS.some((re) => re.test(text));
 }
 
-// --- NODE: guard_in — injeksi (heuristik + Llama Guard) -> redaksi PII -> scope ---
+function techs(...t: XrayTechnique[]): XrayTechnique[] {
+  return t;
+}
+
+// --- NODE: guard_in — aturan deterministik -> redaksi PII -> (paralel) Llama Guard + RAG + intent cadangan ---
 async function nodeGuardIn(state: State, config: any): Promise<Partial<State>> {
-  const { env, trace }: RunConfigurable = config.configurable;
+  const { env, trace, bag }: RunConfigurable = config.configurable;
   const span = trace?.span("guard_in", { textLen: state.userText.length });
+  const startedAt = since(state);
+  const rules: XrayGuardRule[] = [];
+  const blockWith = (layer: string, rule: string, detail: string, finalText: string, technique: XrayTechnique[]) => {
+    rules.push({ rule, result: "blok", detail });
+    audit(bag, env.DB, state.sessionId, "system", "guard_block", { layer, reason: detail });
+    span?.end({ blocked: true, layer, technique, guards: rules }, "WARNING");
+    return { blockedByGuard: layer, instantDelivery: true, finalText };
+  };
 
   const heur = heuristicInjectionCheck(state.userText);
   if (heur.blocked) {
-    await appendAuditLog(env.DB, state.sessionId, "system", "guard_block", { layer: "injection_heuristic", reason: heur.reason });
-    span?.end({ blocked: true, layer: "injection_heuristic" }, "WARNING");
-    return {
-      blockedByGuard: "injection",
-      instantDelivery: true,
-      finalText: "Maaf, pesan Anda terdeteksi mengandung instruksi yang tidak dapat saya proses demi keamanan akun Anda. Jika ini kesalahan, silakan ajukan pertanyaan dengan kalimat lain, atau saya alihkan ke CS.",
-    };
+    return blockWith("injection", "pola prompt injection", (heur.reason ?? "").slice(0, 90), "Maaf, pesan Anda terdeteksi mengandung instruksi yang tidak dapat saya proses demi keamanan akun Anda. Jika ini kesalahan, silakan ajukan pertanyaan dengan kalimat lain, atau saya alihkan ke CS.", techs(TECH.injectionRegex));
   }
+  rules.push({ rule: "pola prompt injection (regex)", result: "lolos" });
 
-  // FIX (temuan QA M2, "Tool abuse" dijawab LLM dengan nada menyetujui "Bisa, Bu..."): permintaan
-  // hapus/ubah riwayat transaksi/status pembayaran ditolak DETERMINISTIK di sini (sebelum LLM sama
-  // sekali melihatnya) -- sistem ini sengaja tidak punya tool UPDATE/DELETE untuk data inti (lihat
-  // README §10), jadi penolakannya harus pasti, bukan tergantung mood model. Kategori terpisah
-  // ("tool_policy") dari "injection" supaya X-Ray/Red Team Arena bisa atribusi layer yang benar.
+  // FIX (temuan QA M2): ubah/hapus riwayat transaksi ditolak DETERMINISTIK (tidak ada tool UPDATE/DELETE).
   const writeAbuse = checkDataIntegrityAbuse(state.userText);
   if (writeAbuse.blocked) {
-    await appendAuditLog(env.DB, state.sessionId, "system", "guard_block", { layer: "tool_policy", reason: writeAbuse.reason });
-    span?.end({ blocked: true, layer: "tool_policy" }, "WARNING");
-    return {
-      blockedByGuard: "tool_policy",
-      instantDelivery: true,
-      finalText: "Maaf, saya TIDAK BISA menghapus atau mengubah riwayat transaksi/status pembayaran Anda — sistem ini sengaja tidak memiliki tool untuk itu (integritas data: audit log append-only, tidak ada update/delete langsung ke data transaksi, lihat kebijakan integritas data kami). Kalau Anda keberatan dengan status keterlambatan/denda, saya bisa catat sebagai pengaduan untuk ditinjau CS/tim kredit — bukan diubah otomatis. Mau saya bantu buatkan pengaduan itu?",
-    };
+    return blockWith("tool_policy", "kebijakan tool: ubah/hapus data", (writeAbuse.reason ?? "").slice(0, 90), "Maaf, saya TIDAK BISA menghapus atau mengubah riwayat transaksi/status pembayaran Anda — sistem ini sengaja tidak memiliki tool untuk itu (integritas data: audit log append-only, tidak ada update/delete langsung ke data transaksi, lihat kebijakan integritas data kami). Kalau Anda keberatan dengan status keterlambatan/denda, saya bisa catat sebagai pengaduan untuk ditinjau CS/tim kredit — bukan diubah otomatis. Mau saya bantu buatkan pengaduan itu?", techs(TECH.injectionRegex, TECH.dataIntegrity));
   }
+  rules.push({ rule: "kebijakan tool: ubah/hapus data", result: "lolos" });
 
   const piiExfil = checkThirdPartyPiiRequest(state.userText);
   if (piiExfil.blocked) {
-    await appendAuditLog(env.DB, state.sessionId, "system", "guard_block", { layer: "privacy_exfil", reason: piiExfil.reason });
-    span?.end({ blocked: true, layer: "privacy_exfil" }, "WARNING");
-    return {
-      blockedByGuard: "privacy_exfil",
-      instantDelivery: true,
-      finalText: "Maaf, saya tidak bisa memberikan data pribadi orang lain (NIK, nomor HP, alamat, atau rekening), apa pun keperluannya. Setiap mitra hanya bisa mengakses datanya sendiri setelah verifikasi. Untuk kebutuhan internal/audit, silakan ajukan lewat jalur resmi tim yang berwenang.",
-    };
+    return blockWith("privacy_exfil", "privasi pihak ketiga", (piiExfil.reason ?? "").slice(0, 90), "Maaf, saya tidak bisa memberikan data pribadi orang lain (NIK, nomor HP, alamat, atau rekening), apa pun keperluannya. Setiap mitra hanya bisa mengakses datanya sendiri setelah verifikasi. Untuk kebutuhan internal/audit, silakan ajukan lewat jalur resmi tim yang berwenang.", techs(TECH.injectionRegex, TECH.dataIntegrity, TECH.privacyExfil));
   }
-
-  const { redacted, matches } = redactPII(state.userText);
-  if (matches.length > 0) {
-    await appendAuditLog(env.DB, state.sessionId, "system", "pii_redacted", { count: matches.length, types: matches.map((m) => m.type) });
-  }
-
-  const guardCheck = await llamaGuardCheck(env.AI, env.MODEL_GUARD, redacted);
-  if (guardCheck.blocked) {
-    await appendAuditLog(env.DB, state.sessionId, "system", "guard_block", { layer: "llama_guard", reason: guardCheck.reason });
-    span?.end({ blocked: true, layer: "llama_guard" }, "WARNING");
-    return {
-      blockedByGuard: "llama_guard",
-      instantDelivery: true,
-      finalText: "Maaf, pesan Anda terdeteksi tidak aman untuk diproses otomatis. Saya alihkan ke CS manusia.",
-    };
-  }
+  rules.push({ rule: "privasi pihak ketiga", result: "lolos" });
 
   const scope = checkScope(state.userText);
   if (!scope.inScope) {
-    await appendAuditLog(env.DB, state.sessionId, "system", "guard_block", { layer: "scope", reason: scope.reason });
-    span?.end({ blocked: true, layer: "scope" }, "WARNING");
-    return {
-      blockedByGuard: "scope",
-      instantDelivery: true,
-      finalText: "Maaf, saya hanya dapat membantu hal-hal terkait layanan Modal Mitra Contoh (pinjaman, majelis, pendanaan, pengaduan, data pribadi). Untuk topik ini saya tidak bisa membantu.",
-    };
+    return blockWith("scope", "cakupan topik", scope.reason ?? "", "Maaf, saya hanya dapat membantu hal-hal terkait layanan Modal Mitra Contoh (pinjaman, majelis, pendanaan, pengaduan, data pribadi). Untuk topik ini saya tidak bisa membantu.", techs(TECH.injectionRegex, TECH.scope));
+  }
+  rules.push({ rule: "cakupan topik", result: "lolos" });
+
+  const { redacted, matches } = redactPII(state.userText);
+  rules.push({ rule: "redaksi PII", result: matches.length ? "ubah" : "lolos", detail: matches.length ? `${matches.length} nilai → token (${[...new Set(matches.map((m) => m.type))].join(", ")})` : "tidak ada PII" });
+  if (matches.length > 0) audit(bag, env.DB, state.sessionId, "system", "pii_redacted", { count: matches.length, types: matches.map((m) => m.type) });
+
+  // Mulai PARALEL: Llama Guard (ditunggu di sini), retrieval RAG (ditunggu di tools), intent cadangan
+  // (ditunggu di route_intent, hanya bila aturan regex = "lain"). Retrieval memakai teks TEREDAKSI.
+  const lgStart = Date.now();
+  bag.llamaGuard = withTimeout(
+    llamaGuardCheck(env.AI, env.MODEL_GUARD, redacted).then((r) => ({ ...r, ms: Date.now() - lgStart })),
+    LLAMA_GUARD_TIMEOUT_MS,
+    { blocked: false, source: "none" as const, reason: `timeout ${LLAMA_GUARD_TIMEOUT_MS}ms → fail-open ke aturan`, ms: LLAMA_GUARD_TIMEOUT_MS },
+  );
+  bag.retrieval = retrieve(env.AI, env.VECTORIZE, env.EMBED_MODEL, redacted);
+  const ruleIntent = classifyIntent(state.userText, state.persona as Persona);
+  if (ruleIntent === "lain" && env.KENARI_API_KEY && redacted.trim().split(/\s+/).length >= 4) {
+    bag.llmIntent = classifyIntentLLM(env.KENARI_API_KEY, redacted, env.KENARI_CHAT_MODEL, INTENT_LLM_TIMEOUT_MS);
   }
 
-  span?.end({ blocked: false, piiRedactedCount: matches.length });
+  const lg = await bag.llamaGuard;
+  const lgCall: XrayCall = { kind: "model", name: env.MODEL_GUARD.replace(/^@cf\//, ""), args: "pesan teredaksi", result: lg.blocked ? `unsafe → blok (${lg.reason?.slice(0, 40)})` : lg.source === "none" ? lg.reason ?? "tidak tersedia → fail-open" : lg.reason ? `observasi: ${lg.reason}` : "safe", ms: lg.ms, atMs: startedAt };
+  if (lg.blocked) {
+    rules.push({ rule: "Llama Guard 3", result: "blok", detail: lg.reason?.slice(0, 80) });
+    audit(bag, env.DB, state.sessionId, "system", "guard_block", { layer: "llama_guard", reason: lg.reason });
+    span?.end({ blocked: true, layer: "llama_guard", technique: techs(TECH.injectionRegex, TECH.piiRedaction, TECH.llamaGuard), calls: [lgCall], guards: rules }, "WARNING");
+    return { blockedByGuard: "llama_guard", instantDelivery: true, finalText: "Maaf, pesan Anda terdeteksi tidak aman untuk diproses otomatis. Saya alihkan ke CS manusia." };
+  }
+  rules.push({ rule: "Llama Guard 3", result: lg.source === "none" ? "lewati" : "lolos", detail: lg.source === "none" ? "fail-open (aturan deterministik tetap berlaku)" : undefined });
+
+  span?.end({
+    blocked: false,
+    piiRedactedCount: matches.length,
+    technique: techs(TECH.injectionRegex, TECH.dataIntegrity, TECH.privacyExfil, TECH.scope, TECH.piiRedaction, TECH.llamaGuard, TECH.parallel),
+    calls: [lgCall],
+    guards: rules,
+    parallel: ["llama_guard", "rag_retrieval", ...(bag.llmIntent ? ["intent_llm"] : [])],
+  });
   return { redacted, vaultEntries: matches.map((m) => [m.token, m.original] as [string, string]) };
 }
 
-// --- NODE: verify_identity — auto-verify oportunistik bila pesan SENDIRI sudah menyertakan
-// nomor pinjaman + tanggal lahir (pola identik dengan temuan review eval "keterlambatan" di
-// README §7 poin 2, hanya sekarang dijalankan sebagai node tersendiri sebelum router, bukan
-// disisipkan di tengah blok intent). classifyIntent dipanggil di sini juga (murah, sinkron,
-// tanpa LLM) HANYA untuk menjaga gating PERSIS sama dengan versi pra-LangGraph: tidak menambah
-// perilaku baru, hanya memindahkan posisi eksekusi agar sesuai urutan node yang diminta brief.
+// --- NODE: verify_identity — auto-verify dua faktor bila pesan memuat ID + tanggal lahir ---
+const BIRTH_RE = [/\b\d{4}-\d{2}-\d{2}\b/, /\b\d{1,2}[\/-]\d{1,2}[\/-]\d{4}\b/, /\b\d{1,2}\s+(januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember)\s+\d{4}\b/i];
+
 async function nodeVerifyIdentity(state: State, config: any): Promise<Partial<State>> {
-  const { env, trace }: RunConfigurable = config.configurable;
+  const { env, trace, bag }: RunConfigurable = config.configurable;
   const span = trace?.span("verify_identity", {});
+  const technique = techs(TECH.autoVerify, TECH.piiRedaction);
   if (state.verifiedActorId) {
-    // X-Ray: giliran setelah verifikasi tetap menampilkan "terverifikasi" (bukan "belum/skip").
-    span?.end({ skipped: true, reason: "already_verified", verified: true });
+    span?.end({ skipped: true, reason: "already_verified", verified: true, technique, note: "sudah terverifikasi di giliran sebelumnya" });
     return {};
   }
-  const intent = classifyIntent(state.userText, state.persona as Persona);
-  if (!(intent === "keterlambatan" && state.persona === "mitra")) {
-    span?.end({ skipped: true, reason: "gate_not_met" });
+  const pinjamanMatch = state.persona === "mitra" ? state.userText.match(/\bMMK-\d{6}\b/i) : null;
+  const pendanaMatch = state.persona === "pendana" ? state.userText.match(/\bPND-\d{4}\b/i) : null;
+  const birthMatch = BIRTH_RE.map((re) => state.userText.match(re)).find(Boolean) ?? null;
+  if (!(pinjamanMatch || pendanaMatch) || !birthMatch) {
+    span?.end({ skipped: true, reason: "no_pattern", technique, note: "pesan tidak memuat pasangan ID + tanggal lahir" });
     return {};
   }
-  const pinjamanMatch = state.userText.match(/\bMMK-\d{6}\b/i);
-  const birthMatch =
-    state.userText.match(/\b\d{4}-\d{2}-\d{2}\b/) ??
-    state.userText.match(/\b\d{1,2}[\/-]\d{1,2}[\/-]\d{4}\b/) ??
-    state.userText.match(/\b\d{1,2}\s+(januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember)\s+\d{4}\b/i);
-  if (!pinjamanMatch || !birthMatch) {
-    span?.end({ skipped: true, reason: "no_pattern" });
-    return {};
-  }
-  const verifyResult = await executeTool(env.DB, "verify_mitra", { pinjaman_no: pinjamanMatch[0].toUpperCase(), birth_date: normalizeBirthDate(birthMatch[0]) }, { verifiedActorId: null, actorType: null, sessionId: state.sessionId });
+  const tool: ToolName = pinjamanMatch ? "verify_mitra" : "verify_pendana";
+  const args = pinjamanMatch
+    ? { pinjaman_no: pinjamanMatch[0].toUpperCase(), birth_date: normalizeBirthDate(birthMatch[0]) }
+    : { pendana_id: pendanaMatch![0].toUpperCase(), birth_date: normalizeBirthDate(birthMatch[0]) };
+  const t0 = Date.now();
+  const at = since(state);
+  const verifyResult = await executeTool(env.DB, tool, args, { verifiedActorId: null, actorType: null, sessionId: state.sessionId });
+  const call: XrayCall = { kind: "tool", name: tool, args: maskArgs(args), result: summarizeToolResult(tool, verifyResult), ms: Date.now() - t0, atMs: at };
   if (verifyResult.ok && verifyResult.data?.verified) {
-    await appendAuditLog(env.DB, state.sessionId, "system", "tool_call", { tool: "verify_mitra", ok: true, auto: true });
+    audit(bag, env.DB, state.sessionId, "system", "tool_call", { tool, ok: true, auto: true });
     const actorId = String(verifyResult.data.actor_id);
-    span?.end({ verified: true });
+    span?.end({ verified: true, technique, calls: [call] });
     return {
       verifiedActorId: actorId,
-      allowedIds: [...new Set([...state.allowedIds, actorId.toUpperCase()])],
-      toolCallsMade: [...state.toolCallsMade, { tool: "verify_mitra", ok: true }],
+      allowedIds: [...new Set([...state.allowedIds, actorId.toUpperCase(), ...(pinjamanMatch ? [pinjamanMatch[0].toUpperCase()] : [])])],
+      toolCallsMade: [...state.toolCallsMade, { tool, ok: true }],
     };
   }
-  span?.end({ verified: false });
-  return {};
+  audit(bag, env.DB, state.sessionId, "system", "tool_call", { tool, ok: false, auto: true });
+  span?.end({ verified: false, technique, calls: [call] });
+  return { toolCallsMade: [...state.toolCallsMade, { tool, ok: false }] };
 }
 
-// --- NODE: route_intent — klasifikasi intent + HITL + aksi kepatuhan deterministik (tiket/DSR/restru) ---
+// --- NODE: route_intent — intent (aturan + cadangan LLM) + HITL + aksi kepatuhan deterministik ---
 async function nodeRouteIntent(state: State, config: any): Promise<Partial<State>> {
-  const { env, trace }: RunConfigurable = config.configurable;
+  const { env, trace, bag }: RunConfigurable = config.configurable;
   const span = trace?.span("route_intent", {});
-  const intent = classifyIntent(state.userText, state.persona as Persona);
+  const technique: XrayTechnique[] = [TECH.intentRules];
+  const calls: XrayCall[] = [];
+  let intent: Intent = classifyIntent(state.userText, state.persona as Persona);
+  let intentSource = "aturan regex";
+  if (intent === "lain" && bag.llmIntent) {
+    const at = since(state);
+    const llm = await bag.llmIntent;
+    technique.push(TECH.intentLLM);
+    calls.push({ kind: "model", name: `kenari:${llm?.model ?? env.KENARI_CHAT_MODEL ?? "?"}`, args: "pesan teredaksi + 3 contoh few-shot", result: llm ? `intent: ${llm.intent}` : "timeout/gagal → tetap 'lain'", ms: llm?.ms, tokIn: llm?.usage?.input, tokOut: llm?.usage?.output, atMs: at });
+    if (llm && llm.intent !== "lain") {
+      // Intent kepatuhan mitra-only tetap tunduk pada persona (sama seperti aturan).
+      const mitraOnly = llm.intent === "keterlambatan" || llm.intent === "pengajuan";
+      if (!mitraOnly || state.persona === "mitra") {
+        intent = llm.intent;
+        intentSource = "LLM few-shot (aturan = lain)";
+      }
+    }
+  }
   const explicitHumanRequest = /\b(bicara dengan (manusia|cs|petugas)|minta cs|mau cs|(sambung(in|kan)?|connect|m(i|n)ta|hubungkan)\b.{0,15}\b(cs|petugas|manusia))\b/i.test(state.userText.toLowerCase());
   const hitl = detectHitl(state.userText, state.failedUnderstandingCount, explicitHumanRequest);
+  technique.push(TECH.hitl);
 
   let autoTicket: any = null;
   const extraToolCalls: { tool: string; ok: boolean }[] = [];
+  const runAction = async (tool: ToolName, args: Record<string, any>, actorType: "mitra" | "pendana") => {
+    const t0 = Date.now();
+    const at = since(state);
+    const result = await executeTool(env.DB, tool, args, { verifiedActorId: state.verifiedActorId, actorType, sessionId: state.sessionId });
+    calls.push({ kind: "tool", name: tool, args: maskArgs(Object.fromEntries(Object.entries(args).map(([k, v]) => [k, typeof v === "string" ? v.slice(0, 40) : v]))), result: summarizeToolResult(tool, result), ms: Date.now() - t0, atMs: at });
+    return result;
+  };
   if (intent === "pengaduan") {
     const category = /penagihan|debt collector|\bdc\b/i.test(state.userText)
       ? "penagihan"
@@ -321,25 +384,21 @@ async function nodeRouteIntent(state: State, config: any): Promise<Partial<State
             ? "produk"
             : "layanan";
     const ticketSeverity = hitl.shouldHandoff ? hitl.severity : "normal";
-    const result = await executeTool(
-      env.DB,
-      "create_complaint_ticket",
-      { category, severity: ticketSeverity, subject: state.userText.slice(0, 100), description: state.userText },
-      { verifiedActorId: state.verifiedActorId, actorType: state.persona === "pendana" ? "pendana" : "mitra", sessionId: state.sessionId },
-    );
+    const result = await runAction("create_complaint_ticket", { category, severity: ticketSeverity, subject: state.userText.slice(0, 100), description: state.userText }, state.persona === "pendana" ? "pendana" : "mitra");
     if (result.ok) {
       autoTicket = result.data;
       extraToolCalls.push({ tool: "create_complaint_ticket", ok: true });
-      await appendAuditLog(env.DB, state.sessionId, "system", "tool_call", { tool: "create_complaint_ticket", ok: true, auto: true });
+      audit(bag, env.DB, state.sessionId, "system", "tool_call", { tool: "create_complaint_ticket", ok: true, auto: true });
     }
   }
 
   if (hitl.shouldHandoff) {
-    await appendAuditLog(env.DB, state.sessionId, "system", "handoff", { reason: hitl.reason, severity: hitl.severity, ticket_id: autoTicket?.ticket_id ?? null });
+    audit(bag, env.DB, state.sessionId, "system", "handoff", { reason: hitl.reason, severity: hitl.severity, ticket_id: autoTicket?.ticket_id ?? null });
     const sev = hitl.severity === "critical" ? "Permintaan Anda sangat penting dan langsung kami eskalasi dengan prioritas tinggi." : "Baik, saya alihkan percakapan ini ke tim CS kami.";
     const ticketLine = autoTicket ? ` Pengaduan Anda sudah tercatat dengan nomor tiket ${autoTicket.ticket_id}.` : "";
     const text = `${sev}${ticketLine} Mohon tunggu sebentar, CS kami akan segera membantu Anda.`;
-    span?.end({ intent, handoff: true, severity: hitl.severity });
+    if (calls.some((c) => c.kind === "tool")) technique.push(TECH.deterministicAction);
+    span?.end({ intent, intentSource, handoff: true, severity: hitl.severity, hitlReason: hitl.reason, technique, calls });
     return {
       intent,
       autoTicket,
@@ -354,112 +413,170 @@ async function nodeRouteIntent(state: State, config: any): Promise<Partial<State
 
   let autoDsr: any = null;
   if (intent === "hak_data") {
-    const requestType = /hapus/i.test(state.userText)
-      ? "delete"
-      : /koreksi|perbaiki|ubah/i.test(state.userText)
-        ? "correction"
-        : /keberatan|automated|otomatis/i.test(state.userText)
-          ? "object_automated_decision"
-          : "access";
-    const result = await executeTool(env.DB, "create_dsr_request", { request_type: requestType, detail: state.userText.slice(0, 500) }, { verifiedActorId: state.verifiedActorId, actorType: state.persona === "pendana" ? "pendana" : "mitra", sessionId: state.sessionId });
+    const requestType = /hapus/i.test(state.userText) ? "delete" : /koreksi|perbaiki|ubah/i.test(state.userText) ? "correction" : /keberatan|automated|otomatis/i.test(state.userText) ? "object_automated_decision" : "access";
+    const result = await runAction("create_dsr_request", { request_type: requestType, detail: state.userText.slice(0, 500) }, state.persona === "pendana" ? "pendana" : "mitra");
     if (result.ok) {
       autoDsr = result.data;
       extraToolCalls.push({ tool: "create_dsr_request", ok: true });
-      await appendAuditLog(env.DB, state.sessionId, "system", "tool_call", { tool: "create_dsr_request", ok: true, auto: true });
+      audit(bag, env.DB, state.sessionId, "system", "tool_call", { tool: "create_dsr_request", ok: true, auto: true });
     }
   }
 
-  // FIX BLOCKER (temuan QA #2): SEBELUMNYA setiap pesan ber-intent "keterlambatan" dari mitra
-  // terverifikasi otomatis membuat restrukturisasi BARU -- termasuk saat user hanya menjawab "iya
-  // bu" terhadap tawaran AI (reason tercatat literal "iya bu", bukan konteks), DAN saat user
-  // bertanya ulang ("jd keringanan sy gmn kelanjutannya?") ikut membuat entri DUPLIKAT. Sekarang:
-  // (1) hanya dibuat kalau user secara EKSPLISIT minta/sebut restrukturisasi/keringanan, ATAU
-  // balasan singkat ("iya"/"ya"/"oke"/"boleh"/"setuju"/"lanjut") yang MERESPONS tawaran AI
-  // sebelumnya (dicek dari history, bukan ditebak); (2) idempotency ditegakkan lagi di
-  // executeTool (src/tools/execute.ts) -- kalau sudah ada permintaan aktif, dikembalikan
-  // statusnya yang SUDAH ADA, tidak membuat baris baru.
+  // FIX BLOCKER (temuan QA #2): restrukturisasi hanya dibuat bila diminta EKSPLISIT atau konfirmasi
+  // singkat atas tawaran AI sebelumnya; idempotensi juga ditegakkan di executeTool.
   let autoRestru: any = null;
   if (intent === "keterlambatan" && state.persona === "mitra" && state.verifiedActorId) {
     const lastAssistantText = [...state.history].reverse().find((h) => h.role === "assistant")?.text ?? "";
     const offeredKeringanan = /keringanan|restrukturisasi|perpanjang(an)?/i.test(lastAssistantText);
     const explicitRestruRequest = /restrukturisasi|keringanan|perpanjang|ajukan/i.test(state.userText);
     const briefConfirm = /^\s*(iya|ya|yap|oke|ok|boleh|setuju|lanjut(kan)?)\b/i.test(state.userText.trim());
-    const shouldCreateRestru = explicitRestruRequest || (briefConfirm && offeredKeringanan);
-    if (shouldCreateRestru) {
-      const reason = explicitRestruRequest
-        ? state.userText.slice(0, 500)
-        : `Konfirmasi atas tawaran sebelumnya ("${lastAssistantText.slice(0, 150)}") — balasan mitra: "${state.userText.slice(0, 150)}"`;
-      const result = await executeTool(env.DB, "create_restructuring_request", { reason }, { verifiedActorId: state.verifiedActorId, actorType: "mitra", sessionId: state.sessionId });
+    if (explicitRestruRequest || (briefConfirm && offeredKeringanan)) {
+      const reason = explicitRestruRequest ? state.userText.slice(0, 500) : `Konfirmasi atas tawaran sebelumnya ("${lastAssistantText.slice(0, 150)}") — balasan mitra: "${state.userText.slice(0, 150)}"`;
+      const result = await runAction("create_restructuring_request", { reason }, "mitra");
       if (result.ok) {
         autoRestru = result.data;
         extraToolCalls.push({ tool: "create_restructuring_request", ok: true });
-        await appendAuditLog(env.DB, state.sessionId, "system", "tool_call", { tool: "create_restructuring_request", ok: true, auto: true, idempotent: result.data?.alreadyExisted ?? false });
+        audit(bag, env.DB, state.sessionId, "system", "tool_call", { tool: "create_restructuring_request", ok: true, auto: true, idempotent: result.data?.alreadyExisted ?? false });
       }
     }
   }
+  if (calls.some((c) => c.kind === "tool")) technique.push(TECH.deterministicAction);
 
-  span?.end({ intent, handoff: false });
+  span?.end({ intent, intentSource, handoff: false, technique, calls });
   return { intent, autoTicket, autoDsr, autoRestru, toolCallsMade: [...state.toolCallsMade, ...extraToolCalls] };
 }
 
-// --- NODE: tools — RAG retrieval + loop ReAct terbatas (<=MAX_STEPS) tool_call|final_answer ---
+/** Tool deterministik yang PASTI dibutuhkan intent ini (dipanggil kode, bukan dipilih LLM). */
+function plannedTools(state: State, verifiedActorId: string | null): { tool: ToolName; args: Record<string, any> }[] {
+  if (!verifiedActorId) return [];
+  const t = state.userText.toLowerCase();
+  if (state.persona === "mitra") {
+    const wantsMajelis = /majelis|pertemuan|jadwal|petugas/.test(t);
+    const wantsAngsuran = /angsuran|cicilan|sisa|tagihan|jatuh tempo|bayar|telat|setor|denda/.test(t) || state.intent === "keterlambatan";
+    const out: { tool: ToolName; args: Record<string, any> }[] = [];
+    if (state.intent === "keterlambatan") out.push({ tool: "get_angsuran", args: { only_unpaid: true } });
+    else if (wantsAngsuran || (state.intent === "akun" && !wantsMajelis)) out.push({ tool: "get_angsuran", args: { only_unpaid: false } });
+    if (wantsMajelis) out.push({ tool: "get_majelis_info", args: {} });
+    return out;
+  }
+  if (state.persona === "pendana" && (state.intent === "akun" || /portofolio|portfolio|pendanaan saya|dana saya|pencairan/.test(t))) {
+    return [{ tool: "get_portofolio", args: {} }];
+  }
+  return [];
+}
+
+// --- NODE: tools — RAG (sudah berjalan sejak guard_in) + prefetch tool deterministik + ReAct bila perlu + jawaban streaming ---
 async function nodeTools(state: State, config: any): Promise<Partial<State>> {
-  const { env, trace }: RunConfigurable = config.configurable;
+  const { env, trace, bag }: RunConfigurable = config.configurable;
   const span = trace?.span("tools", { intent: state.intent });
   const allowedIds = new Set(state.allowedIds);
   const vault = new Map(state.vaultEntries);
   let verifiedActorId = state.verifiedActorId;
+  const calls: XrayCall[] = [];
+  const technique: XrayTechnique[] = [];
+  const toolCallsMade: { tool: string; ok: boolean }[] = [];
+  const actorType: "mitra" | "pendana" | null = state.persona === "pendana" ? "pendana" : state.persona === "mitra" ? "mitra" : null;
 
-  const chunks = await retrieve(env.AI, env.VECTORIZE, env.EMBED_MODEL, state.userText, 8, env.KENARI_API_KEY);
+  // 1) RAG — dimulai paralel di guard_in.
+  const ragWaitAt = since(state);
+  const rag = await (bag.retrieval ?? retrieve(env.AI, env.VECTORIZE, env.EMBED_MODEL, state.redacted));
+  const chunks = rag.chunks;
   const retrievedIds = new Set(chunks.map((c) => c.id.toLowerCase()));
-  await appendAuditLog(env.DB, state.sessionId, "system", "retrieve", { query_redacted: state.redacted, result_ids: [...retrievedIds], count: chunks.length });
+  technique.push(rag.method === "vector" ? TECH.vectorRag : TECH.bm25);
+  calls.push({ kind: "vector", name: rag.method === "vector" ? `${env.EMBED_MODEL.replace(/^@cf\//, "")} + Vectorize` : "BM25 lokal (fallback)", args: `top-k 6, ambang ${rag.method === "vector" ? "0.45" : "1.5"}`, result: `${chunks.length}/${rag.considered.length} dokumen lolos ambang${rag.fallbackReason ? ` · fallback: ${rag.fallbackReason}` : ""}`, ms: rag.ms, atMs: Math.max(0, ragWaitAt - rag.ms) });
+  bag.ragDetail = {
+    method: rag.method,
+    query: state.redacted.slice(0, 160),
+    embedMs: rag.embedMs,
+    queryMs: rag.queryMs,
+    ms: rag.ms,
+    waitedMs: since(state) - ragWaitAt,
+    docs: rag.considered.map((d) => ({ id: d.id, score: d.score, kept: retrievedIds.has(d.id.toLowerCase()) })),
+  };
+  audit(bag, env.DB, state.sessionId, "system", "retrieve", { query_redacted: state.redacted, result_ids: [...retrievedIds], count: chunks.length, method: rag.method });
   const usedRag = chunks.length > 0;
+
+  // 2) Prefetch tool deterministik (paralel satu sama lain).
+  const planned = plannedTools(state, verifiedActorId);
+  const toolData: string[] = [];
+  if (planned.length > 0) {
+    technique.push(TECH.toolPrefetch);
+    await Promise.all(
+      planned.map(async ({ tool, args }) => {
+        const t0 = Date.now();
+        const at = since(state);
+        const result = await executeTool(env.DB, tool, args, { verifiedActorId, actorType, sessionId: state.sessionId });
+        calls.push({ kind: "tool", name: tool, args: maskArgs(args), result: summarizeToolResult(tool, result), ms: Date.now() - t0, atMs: at });
+        toolCallsMade.push({ tool, ok: result.ok });
+        audit(bag, env.DB, state.sessionId, "ai", "tool_call", { tool, ok: result.ok, prefetch: true });
+        if (tool === "get_angsuran" && result.ok) for (const row of result.data?.angsuran ?? []) allowedIds.add(String(row.pinjaman_no).toUpperCase());
+        if (tool === "get_portofolio" && result.ok) for (const row of result.data?.pendanaan ?? []) allowedIds.add(String(row.pendanaan_id).toUpperCase());
+        toolData.push(wrapAsData(`hasil_tool:${tool}`, JSON.stringify(result)));
+      }),
+    );
+  }
 
   let ragContext = formatChunksAsContext(chunks);
   if (state.autoTicket) ragContext += `\n---\n${wrapAsData("tiket_pengaduan_otomatis", JSON.stringify(state.autoTicket))}\nSistem sudah mencatat pengaduan ini sebagai tiket ${state.autoTicket.ticket_id} dengan tenggat ${state.autoTicket.sla_due_at}. Sebutkan nomor tiket dan tenggat ini di jawaban Anda.`;
   if (state.autoDsr) ragContext += `\n---\n${wrapAsData("dsr_otomatis", JSON.stringify(state.autoDsr))}\nSistem sudah mencatat permintaan hak data ini sebagai ${state.autoDsr.dsr_id}. Jelaskan bahwa permintaan TIDAK dieksekusi otomatis dan akan ditinjau tim berwenang, sebutkan nomor ${state.autoDsr.dsr_id}.`;
   if (state.autoRestru) ragContext += `\n---\n${wrapAsData("restrukturisasi_otomatis", JSON.stringify(state.autoRestru))}\nSistem sudah mencatat permintaan restrukturisasi/keringanan ini sebagai ${state.autoRestru.restru_id}. Jelaskan bahwa ini akan ditinjau petugas lapangan/tim kredit, TIDAK ADA keputusan/jaminan otomatis, sebutkan nomor ${state.autoRestru.restru_id}.`;
+  technique.push(TECH.spotlighting);
 
-  // FIX BLOCKER (temuan QA #2): histori giliran sebelumnya disisipkan sebagai pesan user/assistant
-  // biasa SEBELUM giliran saat ini -- supaya LLM benar-benar "ingat" apa yang sudah dibahas (tidak
-  // perlu diulang-ulang token redaksi/RAG untuk giliran lama, cukup teks percakapan apa adanya).
-  const messages: ChatMessage[] = [
-    { role: "system", content: buildSystemPrompt(state.persona as Persona, verifiedActorId, state.styleInstruction) },
-    // Histori di-mask (PII tidak pernah terkirim mentah ke LLM) & giliran asisten ditulis ulang dalam
-    // format protokol JSON -- prosa polos di histori membuat model ikut menjawab prosa + ekor JSON.
-    ...state.history.slice(-10).map((h): ChatMessage =>
-      h.role === "user"
-        ? { role: "user", content: maskPIIForHistory(h.text, true) }
-        : { role: "assistant", content: JSON.stringify({ type: "final_answer", text: maskPIIForHistory(h.text, false), citations: [] }) },
-    ),
-    { role: "user", content: buildUserTurn(state.redacted, wrapAsData("konteks_rag", ragContext)) },
-  ];
+  // Guard streaming dibuat SEKARANG (dipakai jalur stream maupun ReAct) — guard_out span dimulai di
+  // sini karena pengecekan berjalan bersamaan dengan generasi (waterfall X-Ray menampilkan overlap).
+  bag.guardOutSpan = trace?.span("guard_out", { mode: "streaming_per_kalimat" });
+  bag.guardOutStartedAt = since(state);
+  const sink = bag.sink;
+  const citationRelevant = usedRag && state.intent !== "akun";
+  bag.streamGuard = new StreamGuard({
+    vault,
+    allowedIds: () => allowedIds,
+    retrievedIds: () => retrievedIds,
+    citationRequired: () => citationRelevant,
+    emit: async (t) => {
+      if (bag.firstTokenAt === undefined) bag.firstTokenAt = Date.now();
+      await sink?.text(t);
+    },
+    replace: async (t, reason) => sink?.replace(t, reason),
+    parseJson: (raw) => extractAnswerFallback(raw),
+  });
 
-  let finalText = "";
-  let citations: string[] = [];
+  // 3) ReAct HANYA bila LLM perlu memilih tool sendiri: identitas belum terverifikasi tapi pesan
+  //    menyebut nomor pinjaman/ID pendana (auto-verify gagal pola, mis. tanggal lahir informal/hilang).
+  const needsReact = !verifiedActorId && /\[(PINJAMAN|PENDANA_ID)_\d+\]/.test(state.redacted);
+  const react: XrayReactStep[] = [];
   let modelUsed = "none";
-  const toolCallsMade: { tool: string; ok: boolean }[] = [];
+  let streamInfo: Record<string, unknown> | undefined;
 
-  for (let step = 0; step < MAX_STEPS; step++) {
-    const llmRes = await callChatModel(env.AI, env.MODEL_PRIMARY, messages, {}, env.KENARI_API_KEY);
-    modelUsed = llmRes.modelUsed;
-    await appendAuditLog(env.DB, state.sessionId, "ai", "llm_call", { step, model: llmRes.modelUsed, degraded: llmRes.degraded });
-    trace?.generation(`llm_call_step_${step}`, llmRes.modelUsed, messages[messages.length - 1], llmRes.text);
+  if (needsReact) {
+    technique.push(TECH.react);
+    const messages: ChatMessage[] = [
+      { role: "system", content: buildSystemPrompt(state.persona as Persona, verifiedActorId, state.styleInstruction, "json") },
+      ...state.history.slice(-10).map((h): ChatMessage =>
+        h.role === "user" ? { role: "user", content: maskPIIForHistory(h.text, true) } : { role: "assistant", content: JSON.stringify({ type: "final_answer", text: maskPIIForHistory(h.text, false), citations: [] }) },
+      ),
+      { role: "user", content: buildUserTurn(state.redacted, wrapAsData("konteks_rag", ragContext)) },
+    ];
+    let finalRaw = "";
+    for (let step = 0; step < MAX_STEPS; step++) {
+      const at = since(state);
+      const llmRes = await callChatModel(env.AI, env.MODEL_PRIMARY, messages, { kenariModel: env.KENARI_CHAT_MODEL, max_tokens: 700 }, env.KENARI_API_KEY);
+      modelUsed = llmRes.modelUsed;
+      calls.push({ kind: "model", name: llmRes.modelUsed, args: `ReAct langkah ${step + 1} (protokol JSON)`, result: llmRes.text ? "balasan diterima" : "kosong", ms: llmRes.ms, tokIn: llmRes.usage?.input, tokOut: llmRes.usage?.output, atMs: at });
+      audit(bag, env.DB, state.sessionId, "ai", "llm_call", { step, model: llmRes.modelUsed, degraded: llmRes.degraded });
+      trace?.generation(`llm_call_step_${step}`, llmRes.modelUsed, messages[messages.length - 1], llmRes.text, llmRes.usage);
 
-    const parsed = safeParseAgentJson(llmRes.text);
-    if (!parsed) {
-      ({ text: finalText, citations } = extractAnswerFallback(llmRes.text));
-      break;
-    }
-    if (parsed.type === "final_answer") {
-      finalText = parsed.text ?? "";
-      citations = Array.isArray(parsed.citations) ? parsed.citations : [];
-      break;
-    }
-    if (parsed.type === "tool_call") {
+      const parsed = safeParseAgentJson(llmRes.text);
+      if (!parsed || parsed.type !== "tool_call") {
+        react.push({ step: step + 1, action: "final_answer", observation: "jawaban akhir disusun", ms: llmRes.ms });
+        finalRaw = llmRes.text;
+        break;
+      }
       const toolName = parsed.tool as ToolName;
       const def = TOOL_REGISTRY[toolName];
+      const thought = sanitizeThought(parsed.thought);
       if (!def) {
+        react.push({ step: step + 1, thought, action: String(parsed.tool ?? "?"), observation: "tool tidak dikenal", ms: llmRes.ms });
         messages.push({ role: "assistant", content: llmRes.text });
         messages.push({ role: "user", content: buildToolResultTurn(parsed.tool ?? "unknown", JSON.stringify({ ok: false, error: "tool tidak dikenal" })) });
         continue;
@@ -467,79 +584,104 @@ async function nodeTools(state: State, config: any): Promise<Partial<State>> {
       const resolvedArgs = normalizeToolArgs(resolveTokens(parsed.args ?? {}, vault));
       const argsParse = def.schema.safeParse(resolvedArgs);
       if (!argsParse.success) {
-        await appendAuditLog(env.DB, state.sessionId, "system", "tool_call_invalid", { tool: toolName, issues: argsParse.error.issues });
+        audit(bag, env.DB, state.sessionId, "system", "tool_call_invalid", { tool: toolName, issues: argsParse.error.issues });
+        react.push({ step: step + 1, thought, action: toolName, args: maskArgs(parsed.args), observation: "argumen tidak valid (skema Zod)", ms: llmRes.ms });
         messages.push({ role: "assistant", content: llmRes.text });
         messages.push({ role: "user", content: buildToolResultTurn(toolName, JSON.stringify({ ok: false, error: "argumen tidak valid" })) });
         continue;
       }
-
-      const actorType: "mitra" | "pendana" | null = state.persona === "pendana" ? "pendana" : state.persona === "mitra" ? "mitra" : null;
-
       let result: { ok: boolean; data?: any; error?: string };
+      const t0 = Date.now();
       if (toolName === "create_complaint_ticket" && state.autoTicket) result = { ok: true, data: state.autoTicket };
       else if (toolName === "create_dsr_request" && state.autoDsr) result = { ok: true, data: state.autoDsr };
       else if (toolName === "create_restructuring_request" && state.autoRestru) result = { ok: true, data: state.autoRestru };
       else result = await executeTool(env.DB, toolName, argsParse.data as any, { verifiedActorId, actorType, sessionId: state.sessionId });
-
+      const toolMs = Date.now() - t0;
+      calls.push({ kind: "tool", name: toolName, args: maskArgs(parsed.args), result: summarizeToolResult(toolName, result), ms: toolMs, atMs: since(state) - toolMs });
+      react.push({ step: step + 1, thought, action: toolName, args: maskArgs(parsed.args), observation: summarizeToolResult(toolName, result), ms: llmRes.ms + toolMs });
       toolCallsMade.push({ tool: toolName, ok: result.ok });
-      await appendAuditLog(env.DB, state.sessionId, "ai", "tool_call", { tool: toolName, ok: result.ok });
+      audit(bag, env.DB, state.sessionId, "ai", "tool_call", { tool: toolName, ok: result.ok });
 
       if ((toolName === "verify_mitra" || toolName === "verify_pendana") && result.ok && result.data?.verified) {
         verifiedActorId = result.data.actor_id;
         allowedIds.add(String(verifiedActorId).toUpperCase());
-        // FIX (temuan QA MAJOR a, "X-Ray node 2· Verify selalu 'skip' walau verifikasi sukses"):
-        // node verify_identity SUDAH SELESAI (fase sebelum tools) saat verifikasi ini baru terjadi
-        // di SINI (lewat tool_call LLM, bukan auto-verify pola-ketat). Tanpa event tambahan, panel
-        // X-Ray tetap menampilkan node 2 sebagai "skip" walau verifikasi SUKSES di giliran yang
-        // sama -- emit event susulan untuk node yang sama supaya panel menunjukkan status nyata.
-        trace?.span("verify_identity", { viaToolCall: true }).end({ verified: true, via: "tool_call" });
+        // FIX (temuan QA MAJOR a): emit event susulan supaya kartu Verify menunjukkan status nyata.
+        trace?.span("verify_identity", { viaToolCall: true }).end({ verified: true, via: "tool_call", technique: techs(TECH.react) });
       }
       if (toolName === "handoff_to_human" && result.ok) {
-        await appendAuditLog(env.DB, state.sessionId, "system", "handoff", { reason: result.data?.reason ?? "tool_call_llm", severity: "normal", ticket_id: state.autoTicket?.ticket_id ?? null });
+        audit(bag, env.DB, state.sessionId, "system", "handoff", { reason: result.data?.reason ?? "tool_call_llm", severity: "normal", ticket_id: state.autoTicket?.ticket_id ?? null });
         const ticketLine = state.autoTicket ? ` Pengaduan Anda sudah tercatat dengan nomor tiket ${state.autoTicket.ticket_id}.` : "";
-        const text = `Baik, saya alihkan percakapan ini ke tim CS kami.${ticketLine} Mohon tunggu sebentar, CS kami akan segera membantu Anda.`;
-        span?.end({ handoffMidLoop: true, steps: step + 1 });
+        bag.guardOutSpan?.end({ skipped: true, reason: "handoff mid-loop (teks sistem, bukan LLM)" });
+        bag.guardOutSpan = undefined;
+        span?.end({ handoffMidLoop: true, steps: state.toolCallsMade.length + toolCallsMade.length, technique, calls, react: { steps: react }, model: llmRes.modelUsed });
         return {
           handoffTriggered: true,
           instantDelivery: true,
           handoffReason: result.data?.reason ?? "tool_call_llm",
           handoffSeverity: "normal",
-          finalText: text,
+          finalText: `Baik, saya alihkan percakapan ini ke tim CS kami.${ticketLine} Mohon tunggu sebentar, CS kami akan segera membantu Anda.`,
           modelUsed: llmRes.modelUsed,
           verifiedActorId,
           allowedIds: [...allowedIds],
           toolCallsMade: [...state.toolCallsMade, ...toolCallsMade],
         };
       }
-      if (toolName === "get_angsuran" && result.ok) {
-        for (const row of result.data?.angsuran ?? []) allowedIds.add(String(row.pinjaman_no).toUpperCase());
-      }
-      if (toolName === "get_portofolio" && result.ok) {
-        for (const row of result.data?.pendanaan ?? []) allowedIds.add(String(row.pendanaan_id).toUpperCase());
-      }
-
+      if (toolName === "get_angsuran" && result.ok) for (const row of result.data?.angsuran ?? []) allowedIds.add(String(row.pinjaman_no).toUpperCase());
+      if (toolName === "get_portofolio" && result.ok) for (const row of result.data?.pendanaan ?? []) allowedIds.add(String(row.pendanaan_id).toUpperCase());
       messages.push({ role: "assistant", content: llmRes.text });
       messages.push({ role: "user", content: buildToolResultTurn(toolName, JSON.stringify(result)) });
-      continue;
     }
-
-    ({ text: finalText, citations } = extractAnswerFallback(llmRes.text));
-    break;
+    // Jawaban akhir ReAct sudah lengkap (JSON) -> lewat guard per kalimat yang sama, lalu tampil.
+    const { text } = extractAnswerFallback(finalRaw);
+    await bag.streamGuard.push(text || FALLBACK_NOT_FOUND);
+  } else {
+    // 4) Jalur cepat: SATU panggilan LLM streaming teks polos, tool sudah di-prefetch.
+    technique.push(TECH.streamingLLM);
+    const guidance = !verifiedActorId && (state.intent === "akun" || state.intent === "keterlambatan")
+      ? "Identitas BELUM terverifikasi: jelaskan opsi umum dari konteks bila relevan, lalu minta nomor pinjaman + tanggal lahir untuk cek data akunnya."
+      : undefined;
+    const messages: ChatMessage[] = [
+      { role: "system", content: buildSystemPrompt(state.persona as Persona, verifiedActorId, state.styleInstruction, "stream") },
+      ...state.history.slice(-10).map((h): ChatMessage => ({ role: h.role, content: maskPIIForHistory(h.text, h.role === "user") })),
+      { role: "user", content: buildStreamingAnswerTurn(state.redacted, ragContext, toolData.length ? toolData.join("\n\n") : null, guidance) },
+    ];
+    const at = since(state);
+    const res = await streamChatModel(env.AI, env.MODEL_PRIMARY, messages, (d) => bag.streamGuard!.push(d), {
+      kenariApiKey: env.KENARI_API_KEY,
+      kenariModel: env.KENARI_CHAT_MODEL,
+      hedgeAfterMs: Number(env.LLM_HEDGE_AFTER_MS ?? 1800),
+      max_tokens: 700,
+    });
+    modelUsed = res.modelUsed;
+    for (const a of res.attempts) {
+      calls.push({
+        kind: "model",
+        name: a.provider === "kenari" ? `kenari:${a.model}` : a.model,
+        args: `streaming teks · ${messages.length} pesan${a.provider === "workers_ai" ? " · hedge" : ""}`,
+        result: `${a.outcome}${a.ttftMs !== undefined ? ` · token pertama ${a.ttftMs} ms` : ""}`,
+        ms: a.ms,
+        tokIn: a.usage?.input,
+        tokOut: a.usage?.output,
+        atMs: at + a.startedAtMs,
+      });
+    }
+    streamInfo = { ttftMs: res.ttftMs, hedged: res.hedged, winner: res.modelUsed };
+    audit(bag, env.DB, state.sessionId, "ai", "llm_call", { step: 0, model: res.modelUsed, degraded: res.degraded, streaming: true, hedged: res.hedged });
+    trace?.generation("llm_stream_answer", res.modelUsed, messages[messages.length - 1], res.text ?? "", res.usage);
+    if (!res.text) await bag.streamGuard.push(FALLBACK_NOT_FOUND);
   }
 
-  if (!finalText) finalText = FALLBACK_NOT_FOUND;
-  const modelRefused = looksLikeRefusal(finalText);
-  // FIX (temuan QA MAJOR a, "panel Tools 0 langkah padahal tool jalan"): `toolCallsMade` lokal
-  // hanya menghitung tool yang dipanggil DI DALAM loop node ini -- tool yang sudah jalan di node
-  // sebelumnya (mis. verify_mitra via auto-verify di verify_identity, atau create_complaint_ticket
-  // di route_intent) tidak ikut terhitung walau SUDAH jalan di giliran ini, jadi panel X-Ray bisa
-  // menampilkan "0 langkah" walau tool sungguhan jalan. Hitung KUMULATIF dari seluruh giliran.
-  span?.end({ steps: state.toolCallsMade.length + toolCallsMade.length, model: modelUsed, refused: modelRefused });
+  span?.end({
+    steps: state.toolCallsMade.length + toolCallsMade.length,
+    model: modelUsed,
+    technique,
+    calls,
+    rag: bag.ragDetail,
+    react: needsReact ? { steps: react } : { skipped: planned.length ? `ReAct dilewati: tool yang dibutuhkan intent '${state.intent}' sudah dipanggil deterministik` : `ReAct dilewati: intent '${state.intent}' tidak butuh tool yang dipilih LLM` },
+    stream: streamInfo,
+  });
   return {
-    finalText,
-    citations,
     modelUsed,
-    modelRefused,
     verifiedActorId,
     allowedIds: [...allowedIds],
     toolCallsMade: [...state.toolCallsMade, ...toolCallsMade],
@@ -548,76 +690,67 @@ async function nodeTools(state: State, config: any): Promise<Partial<State>> {
   };
 }
 
-// --- NODE: guard_out — de-tokenisasi, larangan janji + sitasi wajib + groundedness, privasi antar-majelis ---
+// --- NODE: guard_out — selesaikan guard streaming (cek akhir) + baris tiket/DSR/restru ---
 async function nodeGuardOut(state: State, config: any): Promise<Partial<State>> {
-  const { env, trace }: RunConfigurable = config.configurable;
-  const span = trace?.span("guard_out", {});
-  const vault = new Map(state.vaultEntries);
-  let finalText = resolveLeakedTokensInText(state.finalText, vault);
-  // Jaring pengaman terakhir (temuan QA MAJOR b): titik konvergensi SEMUA jalur non-instant (tools
-  // -> guard_out) -- kalau finalText MASIH terlihat seperti JSON protokol internal mentah
-  // (apa pun sebabnya), jangan pernah lanjut ke pengguna seperti itu.
-  if (/^\s*\{[\s\S]*"(type|citations|tool)"\s*:/.test(finalText)) finalText = FALLBACK_NOT_FOUND;
-  let citations = state.citations;
-  const tail = salvageJsonTail(finalText);
-  if (tail) {
-    finalText = tail.text || FALLBACK_NOT_FOUND;
-    if (citations.length === 0) citations = tail.citations;
-  }
-  let blockedByGuard: string | undefined;
+  const { env, bag }: RunConfigurable = config.configurable;
+  const sg = bag.streamGuard!;
+  const r = await sg.finish();
+  let finalText = r.text;
+  const blockedByGuard = r.blockedBy;
+  if (blockedByGuard) audit(bag, env.DB, state.sessionId, "system", "output_guard_block", { reason: blockedByGuard, replaced: r.replaced });
 
-  const citationRelevant = state.usedRag && state.intent !== "akun";
-  const outputCheck = checkOutput(finalText, citationRelevant);
-  if (!outputCheck.ok) {
-    await appendAuditLog(env.DB, state.sessionId, "system", "output_guard_block", { reason: outputCheck.reason, piiLeak: outputCheck.piiLeak });
-    finalText = FALLBACK_NOT_FOUND;
-    citations = [];
-    blockedByGuard = outputCheck.reason;
-  } else if (citations.length > 0) {
-    const grounded = checkCitationsGrounded(finalText, new Set(state.retrievedIds));
-    if (!grounded.grounded) {
-      await appendAuditLog(env.DB, state.sessionId, "system", "output_guard_block", { reason: "sitasi tidak ditemukan di konteks", invalid: grounded.invalid });
-      finalText = FALLBACK_NOT_FOUND;
-      citations = [];
-      blockedByGuard = "sitasi_tidak_grounded";
-    }
+  // Baris sistem (bukan LLM) — dikirim sebagai potongan tambahan setelah jawaban.
+  const extras: string[] = [];
+  if (state.autoTicket && !finalText.includes(state.autoTicket.ticket_id)) extras.push(`\n\nPengaduan Anda telah dicatat dengan nomor tiket ${state.autoTicket.ticket_id}, akan ditindaklanjuti paling lambat ${new Date(state.autoTicket.sla_due_at).toLocaleDateString("id-ID")} sesuai SOP penanganan pengaduan kami.`);
+  if (state.autoDsr && !finalText.includes(state.autoDsr.dsr_id)) extras.push(`\n\nPermintaan hak data Anda telah dicatat dengan nomor ${state.autoDsr.dsr_id}. Permintaan ini akan ditinjau oleh tim yang berwenang dan tidak dieksekusi secara otomatis.`);
+  if (state.autoRestru && !finalText.includes(state.autoRestru.restru_id)) extras.push(`\n\nPermintaan restrukturisasi/keringanan Anda telah dicatat dengan nomor ${state.autoRestru.restru_id}, akan ditinjau petugas lapangan/tim kredit. Tidak ada keputusan otomatis.`);
+  for (const e of extras) {
+    finalText += e;
+    if (bag.firstTokenAt === undefined) bag.firstTokenAt = Date.now();
+    await bag.sink?.text(e);
   }
-  if (!blockedByGuard) {
-    const privacyCheck = checkMemberPrivacyLeak(finalText, new Set(state.allowedIds));
-    if (!privacyCheck.ok) {
-      await appendAuditLog(env.DB, state.sessionId, "system", "output_guard_block", { reason: "privasi_antar_majelis", leaked: privacyCheck.leaked });
-      finalText = "Maaf, saya tidak dapat menampilkan data yang bukan milik Anda. Jika ini terkait data Anda sendiri, mohon verifikasi ulang; untuk hal lain saya alihkan ke CS.";
-      citations = [];
-      blockedByGuard = "privasi_antar_majelis";
-    }
-  }
-
-  if (state.autoTicket && !finalText.includes(state.autoTicket.ticket_id)) {
-    finalText += `\n\nPengaduan Anda telah dicatat dengan nomor tiket ${state.autoTicket.ticket_id}, akan ditindaklanjuti paling lambat ${new Date(state.autoTicket.sla_due_at).toLocaleDateString("id-ID")} sesuai SOP penanganan pengaduan kami.`;
-  }
-  if (state.autoDsr && !finalText.includes(state.autoDsr.dsr_id)) {
-    finalText += `\n\nPermintaan hak data Anda telah dicatat dengan nomor ${state.autoDsr.dsr_id}. Permintaan ini akan ditinjau oleh tim yang berwenang dan tidak dieksekusi secara otomatis.`;
-  }
-  if (state.autoRestru && !finalText.includes(state.autoRestru.restru_id)) {
-    finalText += `\n\nPermintaan restrukturisasi/keringanan Anda telah dicatat dengan nomor ${state.autoRestru.restru_id}, akan ditinjau petugas lapangan/tim kredit. Tidak ada keputusan otomatis.`;
-  }
-
-  span?.end({ blocked: !!blockedByGuard, reason: blockedByGuard });
-  return { finalText, citations, blockedByGuard };
+  const citations = blockedByGuard ? [] : [...new Set([...finalText.matchAll(/\[([a-z0-9-]+#[a-z0-9-]+)\]/gi)].map((m) => m[1].toLowerCase()))];
+  const rules: XrayGuardRule[] = [
+    ...r.rules,
+    ...(extras.length ? [{ rule: "baris nomor tiket/DSR/restru (teks sistem)", result: "ubah" as const, detail: `${extras.length} baris ditambahkan` }] : []),
+  ];
+  bag.guardOutSpan?.end(
+    {
+      blocked: !!blockedByGuard,
+      reason: blockedByGuard,
+      replaced: r.replaced,
+      sentencesShown: r.sentencesShown,
+      sentencesChecked: r.sentencesChecked,
+      citedIds: citations,
+      technique: techs(TECH.sentenceGuard, TECH.promptLeak, TECH.piiOutputScan, TECH.promiseBan, TECH.privacyGroundedness, TECH.citationValidation),
+      guards: rules,
+    },
+    blockedByGuard ? "WARNING" : "DEFAULT",
+  );
+  return { finalText, citations, blockedByGuard, replaced: r.replaced, modelRefused: !blockedByGuard && looksLikeRefusal(finalText) };
 }
 
-// --- NODE: respond — bookkeeping akhir (audit "output", timing) ---
+// --- NODE: respond — kirim teks instan (blokir/handoff), tunggu antrean audit, timing ---
 async function nodeRespond(state: State, config: any): Promise<Partial<State>> {
-  const { env, trace }: RunConfigurable = config.configurable;
+  const { env, trace, bag }: RunConfigurable = config.configurable;
   const span = trace?.span("respond", {});
-  await appendAuditLog(env.DB, state.sessionId, "ai", "output", { text_len: state.finalText.length, citations: state.citations, intent: state.intent });
+  if (state.instantDelivery && state.finalText) {
+    bag.firstTokenAt = Date.now();
+    await bag.sink?.text(state.finalText);
+  }
+  const auditStart = Date.now();
+  audit(bag, env.DB, state.sessionId, "ai", "output", { text_len: state.finalText.length, citations: state.citations, intent: state.intent });
+  await bag.auditQ;
   const totalMs = Date.now() - state.turnStartedAt;
-  // instantDelivery (blokir guard_in / handoff) -> firstToken = 0 (balasan kanal langsung, tidak
-  // direlai kata-per-kata); jalur normal (termasuk yang diblokir guard_out) -> firstToken = saat
-  // teks SIAP direlai (identik dengan semantik versi pra-LangGraph, lihat toolAgent.ts di tag v1).
-  const firstTokenMs = state.instantDelivery ? 0 : totalMs;
-  span?.end({ totalMs, firstTokenMs });
-  trace?.update({ output: { text: state.finalText, citations: state.citations, blockedByGuard: state.blockedByGuard, handoff: state.handoffTriggered } });
+  const firstTokenMs = bag.firstTokenAt !== undefined ? bag.firstTokenAt - state.turnStartedAt : null;
+  span?.end({
+    totalMs,
+    firstTokenMs,
+    instant: state.instantDelivery,
+    technique: techs(TECH.audit),
+    calls: [{ kind: "db", name: "audit_log (D1, hash-chain+HMAC)", args: "antrean berurutan", result: "tersimpan", ms: Date.now() - auditStart, atMs: since(state) - (Date.now() - auditStart) }],
+  });
+  trace?.update({ output: { textLen: state.finalText.length, citations: state.citations, blockedByGuard: state.blockedByGuard, handoff: state.handoffTriggered } });
   return { totalMs, firstTokenMs };
 }
 
@@ -645,11 +778,12 @@ export interface AgentTurnInput {
   sessionId: string;
   persona: Persona;
   userText: string;
-  /** Histori beberapa giliran terakhir (lihat ChatAgent.recentHistory) -- fix BLOCKER memori. */
   history?: { role: "user" | "assistant"; text: string }[];
   verifiedActorId: string | null;
   failedUnderstandingCount: number;
   styleInstruction?: string;
+  /** Awal giliran (ms epoch) — default sekarang. ChatAgent mengisi saat pesan diterima. */
+  turnStartedAt?: number;
 }
 
 export interface AgentTurnOutput {
@@ -661,30 +795,13 @@ export interface AgentTurnOutput {
   toolCallsMade: { tool: string; ok: boolean }[];
   modelUsed: string;
   blockedByGuard?: string;
-  /** Lihat AgentState.modelRefused -- true kalau jawaban LLM sendiri (bukan guard) terbaca sebagai penolakan. */
   modelRefused: boolean;
   instantDelivery: boolean;
+  replaced: boolean;
   timing: { firstTokenMs: number | null; totalMs: number };
 }
 
-/** Relay teks akhir per kata dengan jeda kecil -> "mengalir" di UI tanpa bergantung pada streaming
- * token mentah dari model (lihat README §Keputusan Desain — bug streaming Workers AI untuk model
- * ini). Dipanggil oleh pemanggil (ChatAgent/eval), BUKAN node graph — I/O pengiriman ke klien
- * sengaja dipisah dari logika keputusan agen. */
-export async function relayFinalText(text: string, onToken: (token: string) => void, instant: boolean): Promise<void> {
-  if (!text) return;
-  if (instant) {
-    onToken(text);
-    return;
-  }
-  const chunks = text.match(/\S+\s*|\s+/g) ?? [text];
-  for (const chunk of chunks) {
-    onToken(chunk);
-    await new Promise((resolve) => setTimeout(resolve, 18));
-  }
-}
-
-export async function runAgentGraph(env: AgentEnvBindings, input: AgentTurnInput, trace: LangfuseTrace | null = null): Promise<AgentTurnOutput> {
+export async function runAgentGraph(env: AgentEnvBindings, input: AgentTurnInput, trace: LangfuseTrace | null = null, sink: TurnSink | null = null): Promise<AgentTurnOutput> {
   const initial: State = {
     sessionId: input.sessionId,
     persona: input.persona,
@@ -707,17 +824,19 @@ export async function runAgentGraph(env: AgentEnvBindings, input: AgentTurnInput
     modelRefused: false,
     blockedByGuard: undefined,
     instantDelivery: false,
+    replaced: false,
     handoffTriggered: false,
     handoffReason: undefined,
     handoffSeverity: "normal",
     usedRag: false,
     retrievedIds: [],
-    turnStartedAt: Date.now(),
+    turnStartedAt: input.turnStartedAt ?? Date.now(),
     firstTokenMs: null,
     totalMs: 0,
   };
+  const bag: RunBag = { sink, auditQ: Promise.resolve() };
 
-  const final = (await COMPILED_GRAPH.invoke(initial, { configurable: { env, trace } })) as State;
+  const final = (await COMPILED_GRAPH.invoke(initial, { configurable: { env, trace, bag } })) as State;
 
   return {
     answerText: final.finalText,
@@ -730,6 +849,7 @@ export async function runAgentGraph(env: AgentEnvBindings, input: AgentTurnInput
     blockedByGuard: final.blockedByGuard,
     modelRefused: final.modelRefused,
     instantDelivery: final.instantDelivery,
+    replaced: final.replaced,
     timing: { firstTokenMs: final.firstTokenMs, totalMs: final.totalMs },
   };
 }

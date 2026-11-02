@@ -1,0 +1,173 @@
+{
+  "measuredAt": "2026-11-02T04:26:20.868Z",
+  "calls": 12,
+  "userText": "aduh maap bu kemarin blm bisa bayar angsuran, gimana ya",
+  "results": [
+    {
+      "model": "gpt-6-1-terra",
+      "kind": "answer",
+      "ok": false,
+      "status": 503,
+      "err": "{\"error\":{\"code\":\"all_providers_failed\",\"message\":\"upstream unavailable for model gpt-6-1-terra\",\"param\":null,\"type\":\"all_providers_failed\"}}"
+    },
+    {
+      "model": "gpt-6-1-terra",
+      "kind": "answer",
+      "ok": false,
+      "status": 503,
+      "err": "{\"error\":{\"code\":\"all_providers_failed\",\"message\":\"upstream unavailable for model gpt-6-1-terra\",\"param\":null,\"type\":\"all_providers_failed\"}}"
+    },
+    {
+      "model": "gpt-6-1-terra",
+      "kind": "classify",
+      "ok": false,
+      "totalMs": 373,
+      "out": null,
+      "usage": null
+    },
+    {
+      "model": "gpt-6-luna",
+      "kind": "answer",
+      "ok": true,
+      "ttftMs": 7148,
+      "totalMs": 9623,
+      "chars": 356,
+      "usage": {
+        "completion_tokens": 91,
+        "prompt_tokens": 1381,
+        "total_tokens": 1472
+      },
+      "sample": "Tidak apa-apa, Bu, terima kasih sudah memberi kabar. Ibu bisa membahas opsi penjadwalan ulang atau restrukturisasi dengan petugas lapangan; permintaan akan dica",
+      "citesKb": true
+    },
+    {
+      "model": "gpt-6-luna",
+      "kind": "answer",
+      "ok": true,
+      "ttftMs": 5548,
+      "totalMs": 8527,
+      "chars": 349,
+      "usage": {
+        "completion_tokens": 96,
+        "prompt_tokens": 1381,
+        "prompt_tokens_details": {
+          "cached_tokens": 1381
+        },
+        "total_tokens": 1477
+      },
+      "sample": "Tidak apa-apa, Bu, terima kasih sudah memberi kabar. Untuk keterlambatan, tersedia opsi penjadwalan ulang atau restrukturisasi; permintaannya akan dicatat untuk",
+      "citesKb": false
+    },
+    {
+      "model": "gpt-6-luna",
+      "kind": "classify",
+      "ok": true,
+      "totalMs": 7339,
+      "out": "{\"intent\":\"keterlambatan\"}",
+      "usage": {
+        "completion_tokens": 13,
+        "prompt_tokens": 266,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "total_tokens": 279
+      }
+    },
+    {
+      "model": "deepseek-v4-1-flash",
+      "kind": "answer",
+      "ok": true,
+      "ttftMs": 39097,
+      "totalMs": 39710,
+      "chars": 481,
+      "usage": {
+        "completion_tokens": 141,
+        "prompt_tokens": 1527,
+        "total_tokens": 1668
+      },
+      "sample": "Tidak apa-apa, Bu, terima kasih sudah jujur memberi tahu. Kalau memang sedang berat, kita bisa lihat opsi penjadwalan ulang atau restrukturisasi — nanti permint",
+      "citesKb": true
+    },
+    {
+      "model": "deepseek-v4-1-flash",
+      "kind": "answer",
+      "ok": true,
+      "ttftMs": 2153,
+      "totalMs": 2928,
+      "chars": 525,
+      "usage": {
+        "completion_tokens": 161,
+        "prompt_tokens": 1527,
+        "prompt_tokens_details": {
+          "cached_tokens": 1527
+        },
+        "total_tokens": 1688
+      },
+      "sample": "Tidak apa-apa, Bapak/Ibu, terima kasih sudah jujur memberi tahu. Kalau angsuran kemarin belum bisa dibayar, kita bisa bicarakan opsi penjadwalan ulang atau rest",
+      "citesKb": true
+    },
+    {
+      "model": "deepseek-v4-1-flash",
+      "kind": "classify",
+      "ok": true,
+      "totalMs": 2505,
+      "out": "{\"intent\":\"keterlambatan\"}",
+      "usage": {
+        "completion_tokens": 11,
+        "prompt_tokens": 292,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "total_tokens": 303
+      }
+    },
+    {
+      "model": "gemini-3-7-flash",
+      "kind": "answer",
+      "ok": true,
+      "ttftMs": 74311,
+      "totalMs": 76692,
+      "chars": 610,
+      "usage": {
+        "completion_tokens": 139,
+        "prompt_tokens": 1298,
+        "total_tokens": 1437
+      },
+      "sample": "Ibu tidak perlu panik ya, kendala seperti ini bisa kita bicarakan baik-baik. Ada opsi penjadwalan ulang atau restrukturisasi yang bisa diajukan, dan permohonan ",
+      "citesKb": true
+    },
+    {
+      "model": "gemini-3-7-flash",
+      "kind": "answer",
+      "ok": true,
+      "ttftMs": 9997,
+      "totalMs": 11796,
+      "chars": 585,
+      "usage": {
+        "completion_tokens": 135,
+        "prompt_tokens": 1298,
+        "prompt_tokens_details": {
+          "cached_tokens": 1298
+        },
+        "total_tokens": 1433
+      },
+      "sample": "Tidak apa-apa, Bu, jangan panik ya. Jika ada kendala pembayaran, tersedia opsi penjadwalan ulang atau restrukturisasi yang bisa kami catatkan untuk ditinjau leb",
+      "citesKb": true
+    },
+    {
+      "model": "gemini-3-7-flash",
+      "kind": "classify",
+      "ok": true,
+      "totalMs": 5561,
+      "out": "{\"intent\":\"keterlambatan\"}",
+      "usage": {
+        "completion_tokens": 8,
+        "prompt_tokens": 263,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "total_tokens": 271
+      }
+    }
+  ]
+}

@@ -18,7 +18,7 @@ import { AIChatAgent } from "@cloudflare/ai-chat";
 import { createUIMessageStream, createUIMessageStreamResponse, type UIMessage } from "ai";
 import type { Connection, ConnectionContext, WSMessage } from "agents";
 
-import { runAgentGraph, relayFinalText, type AgentEnvBindings } from "../agent/graph";
+import { runAgentGraph, type AgentEnvBindings, type AgentTurnOutput } from "../agent/graph";
 import { callChatModel } from "../agent/llm";
 import { appendAuditLog, verifyChain, configureAuditHmac } from "../obs/audit";
 import { startTrace, pseudonymize, extrasXrayToMain, type LangfuseConfig, type XrayEvent } from "../obs/langfuse";
@@ -55,7 +55,12 @@ interface SessionMeta {
 const RESPONSE_SLA_MINUTES = 5;
 const PSEUDO_SALT = "modal-mitra-demo-v2"; // salt hash satu arah untuk sessionId yang dikirim ke Langfuse — bukan sumber kebenaran apa pun, hanya menghindari PII mentah di trace.
 
+// feat/latency-xray: bila guard streaming mengganti bubble yang sudah sebagian tampil (part
+// `data-guard` action "replace", lihat src/guards/streamGuard.ts), teks pengganti itulah yang
+// berlaku untuk histori/Konsol CS/LLM berikutnya — bukan potongan teks yang sempat di-stream.
 function textOf(m: UIMessage): string {
+  const replaced = (m.parts ?? []).find((p: any) => p.type === "data-guard" && p.data?.action === "replace") as any;
+  if (replaced) return String(replaced.data.text ?? "");
   return (m.parts ?? []).filter((p: any) => p.type === "text").map((p: any) => p.text).join("");
 }
 function roleOf(m: UIMessage): "user" | "ai" | "human" | "system" {
@@ -286,79 +291,104 @@ export class ChatAgent extends AIChatAgent<ChatAgentEnv, SessionMeta> {
       return createUIMessageStreamResponse({ stream: instantTextStream("Percakapan ini sedang ditangani CS kami. Mohon tunggu balasan dari CS.") });
     }
 
+    const turnStartedAt = Date.now();
     const pseudoSession = await pseudonymize(sessionId, PSEUDO_SALT);
     const xray = this.makeXrayRecorder();
     const trace = startTrace(this.langfuseConfig(), "chat_turn", { persona, userTextLen: userText.length }, { sessionId, persona, channel: "websocket" }, undefined, pseudoSession, xray.onXray);
 
-    // feat/extras #2 — heuristik murah (regex/leksikon, TANPA panggilan LLM, lihat
-    // src/extras/language/detect.ts), aman dipanggil di setiap giliran. Event X-Ray diadaptasi ke
-    // skema inti (extrasXrayToMain, lihat src/obs/langfuse.ts) lewat jalur broadcast yang sama.
-    let styleInstruction: string | undefined;
-    if (readFeatureFlags(this.env).langDetect) {
-      const lang = detectAndStyle(userText, pseudoSession);
-      styleInstruction = lang.styleInstruction;
-      xray.onXray(extrasXrayToMain(lang.xray));
-    }
-
-    const result = await runAgentGraph(
-      this.env,
-      { sessionId, persona, userText, history, verifiedActorId: this.state.verifiedActorId, failedUnderstandingCount: this.state.failedUnderstandingCount, styleInstruction },
-      trace,
-    );
-
-    let handoffSummary = this.state.handoffSummary;
-    let handoffAt = this.state.handoffAt;
-    if (result.handoff.triggered) {
-      handoffAt = new Date().toISOString();
-      handoffSummary = await this.summarizeForHandoff();
-      await appendAuditLog(this.env.DB, sessionId, "system", "mode_change", { mode: "HUMAN", reason: result.handoff.reason });
-      // feat/extras #4 — timer durable (Cloudflare Workflows, bertahan lintas restart/deploy,
-      // TIDAK seperti setTimeout) yang mengecek N menit kemudian apakah CS sudah membalas (baca
-      // sessions_index, lihat src/extras/workflows/). Tidak pernah melempar ke pemanggil — gagal
-      // start Workflow TIDAK BOLEH menjatuhkan giliran handoff itu sendiri.
-      if (readFeatureFlags(this.env).slaWorkflow && this.env.SLA_WORKFLOW) {
-        try {
-          await this.env.SLA_WORKFLOW.create({ params: { sessionId, slaMinutes: Number(this.env.SLA_MINUTES ?? 5) } });
-        } catch (err) {
-          console.error("SLA_WORKFLOW.create gagal (non-fatal):", err);
-        }
-      }
-    }
-
-    this.setState({
-      persona,
-      mode: result.handoff.triggered ? "HUMAN" : "AI",
-      verifiedActorId: result.verifiedActorId,
-      failedUnderstandingCount: result.blockedByGuard ? this.state.failedUnderstandingCount + 1 : 0,
-      handoffSummary,
-      handoffAt,
-    });
-    await this.syncSessionsIndex(result.answerText, "ai");
-    this.broadcastToStaff({ type: "message", role: "ai", text: result.answerText, citations: result.citations, ts: new Date().toISOString() });
-    if (result.handoff.triggered) {
-      this.broadcast(JSON.stringify({ type: "mode_change", mode: "HUMAN", reason: result.handoff.reason, severity: result.handoff.severity, summary: handoffSummary }));
-    }
-
-    trace.score("passed_guard", result.blockedByGuard ? 0 : 1, result.blockedByGuard ?? "ok");
-    trace.score("first_token_ms", result.timing.firstTokenMs ?? -1);
-    this.ctx.waitUntil(trace.flush());
-
-    const metaId = crypto.randomUUID();
+    // feat/latency-xray: graph dijalankan DI DALAM stream — teks yang lolos guard per kalimat
+    // langsung ditulis sebagai text-delta (streaming nyata), metadata (sitasi/intent/timing/xray)
+    // dikirim sebagai part `data-meta` TERPISAH di akhir. Sebelumnya seluruh graph selesai dulu baru
+    // stream dibuat -> first-token == total (20.8 s pada kasus 2 Nov).
     const stream = createUIMessageStream({
       execute: async ({ writer }) => {
-        const textId = crypto.randomUUID();
-        writer.write({ type: "text-start", id: textId });
-        await relayFinalText(
-          result.answerText,
-          (chunk) => writer.write({ type: "text-delta", id: textId, delta: chunk }),
-          result.instantDelivery,
-        );
-        writer.write({ type: "text-end", id: textId });
+        let textId: string | null = null;
+        const sink = {
+          text: (delta: string) => {
+            if (!textId) {
+              textId = crypto.randomUUID();
+              writer.write({ type: "text-start", id: textId });
+            }
+            writer.write({ type: "text-delta", id: textId, delta });
+          },
+          replace: (text: string, reason: string) => {
+            writer.write({ type: "data-guard", id: crypto.randomUUID(), data: { action: "replace", text, reason } } as any);
+          },
+        };
+
+        // feat/extras #2 — heuristik murah (regex/leksikon, TANPA LLM), event start+end supaya X-Ray
+        // punya durasi nyata untuk fase ini juga.
+        let styleInstruction: string | undefined;
+        if (readFeatureFlags(this.env).langDetect) {
+          const t0 = Date.now();
+          xray.onXray({ node: "lang_detect", phase: "start", ts: new Date(t0).toISOString(), data: {} });
+          const lang = detectAndStyle(userText, pseudoSession);
+          styleInstruction = lang.styleInstruction;
+          const ev = extrasXrayToMain(lang.xray);
+          xray.onXray({ ...ev, ts: new Date().toISOString(), durationMs: Date.now() - t0, data: { ...ev.data, technique: [{ label: "heuristik leksikon bahasa", desc: "Gaya bahasa (informal/Jawa/Sunda) dikenali dari kosakata tanpa model AI, untuk menyesuaikan gaya balasan." }] } });
+        }
+
+        let result: AgentTurnOutput;
+        try {
+          result = await runAgentGraph(
+            this.env,
+            { sessionId, persona, userText, history, verifiedActorId: this.state.verifiedActorId, failedUnderstandingCount: this.state.failedUnderstandingCount, styleInstruction, turnStartedAt },
+            trace,
+            sink,
+          );
+        } catch (err: any) {
+          console.error("agent_graph_error", err?.message ?? String(err));
+          const fallback = "Maaf, terjadi kendala teknis saat memproses pesan Anda. Silakan coba lagi, atau saya alihkan ke CS.";
+          sink.text(fallback);
+          if (textId) writer.write({ type: "text-end", id: textId });
+          this.ctx.waitUntil(trace.flush());
+          return;
+        }
+        if (textId) writer.write({ type: "text-end", id: textId });
+
+        let handoffSummary = this.state.handoffSummary;
+        let handoffAt = this.state.handoffAt;
+        if (result.handoff.triggered) {
+          handoffAt = new Date().toISOString();
+          handoffSummary = await this.summarizeForHandoff();
+          await appendAuditLog(this.env.DB, sessionId, "system", "mode_change", { mode: "HUMAN", reason: result.handoff.reason });
+          // feat/extras #4 — timer durable (Cloudflare Workflows); gagal start TIDAK menjatuhkan giliran.
+          if (readFeatureFlags(this.env).slaWorkflow && this.env.SLA_WORKFLOW) {
+            try {
+              await this.env.SLA_WORKFLOW.create({ params: { sessionId, slaMinutes: Number(this.env.SLA_MINUTES ?? 5) } });
+            } catch (err) {
+              console.error("SLA_WORKFLOW.create gagal (non-fatal):", err);
+            }
+          }
+        }
+
+        this.setState({
+          persona,
+          mode: result.handoff.triggered ? "HUMAN" : "AI",
+          verifiedActorId: result.verifiedActorId,
+          failedUnderstandingCount: result.blockedByGuard ? this.state.failedUnderstandingCount + 1 : 0,
+          handoffSummary,
+          handoffAt,
+        });
+        await this.syncSessionsIndex(result.answerText, "ai");
+        this.broadcastToStaff({ type: "message", role: "ai", text: result.answerText, citations: result.citations, ts: new Date().toISOString() });
+        if (result.handoff.triggered) {
+          this.broadcast(JSON.stringify({ type: "mode_change", mode: "HUMAN", reason: result.handoff.reason, severity: result.handoff.severity, summary: handoffSummary }));
+        }
+
+        trace.score("passed_guard", result.blockedByGuard ? 0 : 1, result.blockedByGuard ?? "ok");
+        trace.score("first_token_ms", result.timing.firstTokenMs ?? -1);
+        this.ctx.waitUntil(trace.flush());
+
         writer.write({
           type: "data-meta",
-          id: metaId,
-          data: { citations: result.citations, intent: result.intent, blockedByGuard: result.blockedByGuard ?? null, modelRefused: result.modelRefused, timing: result.timing, modelUsed: result.modelUsed, xray: xray.events, traceId: trace.traceId },
+          id: crypto.randomUUID(),
+          data: { citations: result.citations, intent: result.intent, blockedByGuard: result.blockedByGuard ?? null, modelRefused: result.modelRefused, replaced: result.replaced, timing: result.timing, modelUsed: result.modelUsed, toolCallsMade: result.toolCallsMade, xray: xray.events, traceId: trace.traceId },
         });
+      },
+      onError: (err: any) => {
+        console.error("ui_stream_error", err?.message ?? String(err));
+        return "Maaf, terjadi kendala teknis. Silakan coba lagi.";
       },
     });
     return createUIMessageStreamResponse({ stream });
