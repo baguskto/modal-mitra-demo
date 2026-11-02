@@ -130,6 +130,7 @@ function PhaseDetail({ p, citedIds }: { p: PhaseView; citedIds: Set<string> }) {
         <div className="xr-sec">
           <div className="xr-sec-title">RAG · {d.rag.method === "vector" ? "vektor" : "BM25 (fallback)"} · {d.rag.ms} ms{d.rag.embedMs !== undefined ? ` (embed ${d.rag.embedMs} + query ${d.rag.queryMs})` : ""}{d.rag.waitedMs !== undefined ? ` · ditunggu ${d.rag.waitedMs} ms` : ""}</div>
           {d.rag.query && <div className="xr-kv"><span>kueri</span><code>{d.rag.query}</code></div>}
+          {d.rag.expansion && <div className="xr-kv"><span>ekspansi</span>{d.rag.expansion}</div>}
           <table className="xr-docs">
             <tbody>
               {(d.rag.docs ?? []).map((doc: any) => (

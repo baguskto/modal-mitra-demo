@@ -1,0 +1,265 @@
+{
+  "impl": "baseline",
+  "measuredAt": "2026-11-02T04:41:50.771Z",
+  "env": {
+    "D1_LATENCY_MS": 8,
+    "AI_GUARD_SIM_MS": 400,
+    "workersAi": "stub (tidak terjangkau dari Node)",
+    "retrieval": "BM25 lokal (kedua implementasi)"
+  },
+  "n": 10,
+  "firstTokenMs": {
+    "p50": 13004,
+    "p95": 23520,
+    "min": 1064,
+    "max": 23520
+  },
+  "totalMs": {
+    "p50": 13004,
+    "p95": 23520,
+    "min": 1064,
+    "max": 23520
+  },
+  "phaseP50": {
+    "guard_in": 401,
+    "verify_identity": 0,
+    "route_intent": 0,
+    "tools": 12558,
+    "guard_out": 1,
+    "respond": 19
+  },
+  "intentAccuracy": "9/10",
+  "rows": [
+    {
+      "id": "g01_biaya_jasa",
+      "rep": 0,
+      "intent": "info",
+      "intentOk": true,
+      "model": "kenari:gpt-6-1-terra",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 4856,
+      "totalMs": 4856,
+      "wallMs": 4867,
+      "streamedChunks": 0,
+      "phases": {
+        "guard_in": 405,
+        "verify_identity": 1,
+        "route_intent": 2,
+        "tools": 4392,
+        "guard_out": 2,
+        "respond": 20
+      },
+      "answer": "Biaya jasa efektif pinjaman modal usaha mikro berkisar 10%–14% per tahun, tergantung produk dan riwayat pembayaran kelompok. Rincian biaya u"
+    },
+    {
+      "id": "g02_telat_informal",
+      "rep": 0,
+      "intent": "lain",
+      "intentOk": false,
+      "model": "kenari:gpt-6-1-terra",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 13004,
+      "totalMs": 13004,
+      "wallMs": 13006,
+      "streamedChunks": 0,
+      "phases": {
+        "guard_in": 402,
+        "verify_identity": 0,
+        "route_intent": 0,
+        "tools": 12558,
+        "guard_out": 1,
+        "respond": 19
+      },
+      "answer": "Tidak apa-apa, Bu. Kalau kemarin belum bisa bayar, sebaiknya segera sampaikan ke petugas lapangan atau saat pertemuan majelis agar bisa diba"
+    },
+    {
+      "id": "g03_verify_angsuran",
+      "rep": 0,
+      "intent": "akun",
+      "intentOk": true,
+      "model": "kenari:gpt-6-1-terra",
+      "blockedByGuard": null,
+      "tools": [
+        "verify_mitra",
+        "get_angsuran"
+      ],
+      "firstTokenMs": 20481,
+      "totalMs": 20481,
+      "wallMs": 20484,
+      "streamedChunks": 0,
+      "phases": {
+        "guard_in": 419,
+        "verify_identity": 0,
+        "route_intent": 0,
+        "tools": 20019,
+        "guard_out": 1,
+        "respond": 19
+      },
+      "answer": "Verifikasi berhasil. Sisa angsuran Anda saat ini: - Total: 29 angsuran - Total sisa: Rp1.948.800 - Angsuran per periode: Rp67.200 - 1 angsu"
+    },
+    {
+      "id": "g04_majelis_verify",
+      "rep": 0,
+      "intent": "akun",
+      "intentOk": true,
+      "model": "kenari:gpt-6-1-terra",
+      "blockedByGuard": null,
+      "tools": [
+        "verify_mitra",
+        "get_majelis_info"
+      ],
+      "firstTokenMs": 15545,
+      "totalMs": 15545,
+      "wallMs": 15546,
+      "streamedChunks": 0,
+      "phases": {
+        "guard_in": 422,
+        "verify_identity": 1,
+        "route_intent": 1,
+        "tools": 15080,
+        "guard_out": 0,
+        "respond": 18
+      },
+      "answer": "Pertemuan Majelis Mawar 02 berikutnya dijadwalkan pada Selasa, 3 November 2026, pukul 09.00 WIB di wilayah Desa Cibening, Kab. Sukabumi. Pet"
+    },
+    {
+      "id": "g05_pendana_portofolio",
+      "rep": 0,
+      "intent": "akun",
+      "intentOk": true,
+      "model": "kenari:gpt-6-1-terra",
+      "blockedByGuard": null,
+      "tools": [
+        "verify_pendana",
+        "get_portofolio"
+      ],
+      "firstTokenMs": 23520,
+      "totalMs": 23520,
+      "wallMs": 23523,
+      "streamedChunks": 0,
+      "phases": {
+        "guard_in": 419,
+        "verify_identity": 0,
+        "route_intent": 0,
+        "tools": 23066,
+        "guard_out": 1,
+        "respond": 19
+      },
+      "answer": "Portofolio pendanaan Anda: - Total didanai: Rp26.000.000 - Jumlah pendanaan: 4 - FND-00001 — Majelis Melati 01: Rp2.000.000, berjalan, Risk"
+    },
+    {
+      "id": "g06_imbal_hasil",
+      "rep": 0,
+      "intent": "info",
+      "intentOk": true,
+      "model": "kenari:gpt-6-1-terra",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 6925,
+      "totalMs": 6925,
+      "wallMs": 6928,
+      "streamedChunks": 0,
+      "phases": {
+        "guard_in": 400,
+        "verify_identity": 0,
+        "route_intent": 1,
+        "tools": 6484,
+        "guard_out": 0,
+        "respond": 18
+      },
+      "answer": "Tidak. Estimasi imbal hasil pendanaan bukan jaminan, dan risiko gagal bayar kelompok menjadi tanggungan pendana. Pendanaan P2P bukan simpana"
+    },
+    {
+      "id": "g07_syarat_pengajuan",
+      "rep": 0,
+      "intent": "pengajuan",
+      "intentOk": true,
+      "model": "kenari:gpt-6-1-terra",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 14275,
+      "totalMs": 14275,
+      "wallMs": 14278,
+      "streamedChunks": 0,
+      "phases": {
+        "guard_in": 401,
+        "verify_identity": 0,
+        "route_intent": 0,
+        "tools": 13831,
+        "guard_out": 1,
+        "respond": 19
+      },
+      "answer": "Syarat dan proses umumnya: 1. Anda merupakan perempuan pelaku usaha mikro. 2. Pengajuan dilakukan melalui kelompok tanggung renteng atau maj"
+    },
+    {
+      "id": "g08_sla_pengaduan",
+      "rep": 0,
+      "intent": "pengaduan",
+      "intentOk": true,
+      "model": "kenari:gpt-6-1-terra",
+      "blockedByGuard": null,
+      "tools": [
+        "create_complaint_ticket"
+      ],
+      "firstTokenMs": 7107,
+      "totalMs": 7107,
+      "wallMs": 7110,
+      "streamedChunks": 0,
+      "phases": {
+        "guard_in": 401,
+        "verify_identity": 0,
+        "route_intent": 57,
+        "tools": 6606,
+        "guard_out": 1,
+        "respond": 19
+      },
+      "answer": "Pengaduan Anda tercatat sebagai kategori normal dengan nomor tiket TCK-MVYRUK3V. Pengaduan kategori normal ditindaklanjuti paling lambat 10 "
+    },
+    {
+      "id": "g09_keringanan_janji",
+      "rep": 0,
+      "intent": "keterlambatan",
+      "intentOk": true,
+      "model": "kenari:gpt-6-1-terra",
+      "blockedByGuard": "Janji finansial terlarang terdeteksi (pola: pasti (disetujui|diterima|lolos|dikabulkan))",
+      "tools": [],
+      "firstTokenMs": 15115,
+      "totalMs": 15115,
+      "wallMs": 15118,
+      "streamedChunks": 0,
+      "phases": {
+        "guard_in": 401,
+        "verify_identity": 0,
+        "route_intent": 0,
+        "tools": 14653,
+        "guard_out": 19,
+        "respond": 18
+      },
+      "answer": "Maaf, saya tidak menemukan informasi yang pasti untuk pertanyaan ini di basis pengetahuan resmi. Agar tidak memberi informasi yang salah, sa"
+    },
+    {
+      "id": "g10_sapaan_umum",
+      "rep": 0,
+      "intent": "lain",
+      "intentOk": true,
+      "model": "none",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 1064,
+      "totalMs": 1064,
+      "wallMs": 1065,
+      "streamedChunks": 0,
+      "phases": {
+        "guard_in": 401,
+        "verify_identity": 0,
+        "route_intent": 0,
+        "tools": 630,
+        "guard_out": 0,
+        "respond": 18
+      },
+      "answer": "Maaf, saya tidak menemukan informasi yang pasti untuk pertanyaan ini di basis pengetahuan resmi. Agar tidak memberi informasi yang salah, sa"
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { classifyIntent } from "../../src/agent/router";
-import { bm25Search, retrieve } from "../../src/agent/rag";
+import { bm25Search, retrieve, INTENT_QUERY_EXPANSION } from "../../src/agent/rag";
 import { streamChatModel } from "../../src/agent/llm";
 import { maskArgs, summarizeToolResult } from "../../src/obs/xrayDetail";
 
@@ -31,6 +31,12 @@ describe("RAG — BM25 fallback lokal", () => {
     const top = bm25Search("blm bisa bayar angsuran keterlambatan restrukturisasi", 3);
     expect(top.length).toBeGreaterThan(0);
     expect(top.map((c) => c.text).join(" ")).toMatch(/restrukturisasi/i);
+  });
+
+  it("ekspansi kueri intent keterlambatan membawa chunk 'Keterlambatan & Restrukturisasi' ke peringkat 1 (kasus 2 Nov)", () => {
+    const q = "aduh maap bu kemarin blm bisa bayar angsuran, gimana ya";
+    expect(bm25Search(q, 6).map((c) => c.id)).not.toContain("produk#4");
+    expect(bm25Search(`${q}\n${INTENT_QUERY_EXPANSION.keterlambatan}`, 6)[0].id).toBe("produk#4");
   });
 
   it("retrieve() jatuh ke BM25 bila embedding Workers AI gagal (kuota habis) — bukan RAG kosong", async () => {

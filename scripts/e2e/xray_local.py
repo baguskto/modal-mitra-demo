@@ -58,7 +58,11 @@ def run_case(p, fx_name, width, height, open_cards):
     page.on("pageerror", lambda e: errors.append(str(e)))
 
     # HTTP /api/* yang dipanggil UI saat load (status presenter dll.) -> jawaban minimal valid.
-    page.route("**/api/**", lambda r: r.fulfill(status=200, content_type="application/json", body=json.dumps({"presenter": False, "items": [], "sessions": []})))
+    # (get-messages = riwayat awal useAgentChat -> array kosong)
+    def api(route):
+        body = [] if "get-messages" in route.request.url else {"presenter": False, "items": [], "sessions": []}
+        route.fulfill(status=200, content_type="application/json", body=json.dumps(body))
+    page.route("**/api/**", api)
 
     state = {"ws": None}
 
@@ -145,7 +149,7 @@ def run_case(p, fx_name, width, height, open_cards):
         "intentShown": f"intent: {fx['meta']['intent']}" in xray_text,
         "waterfall": page.locator(".xr-wf-row").count(),
         "cards": page.locator(".xray-node").count(),
-        "hasTechnique": "Teknik" in xray_text,
+        "hasTechnique": "teknik" in xray_text.lower(),
         "hasDurations": " ms" in xray_text,
         "noForbiddenShown": not any(s in final_text for s in ["pasti disetujui", "ATURAN KETAT", '"type"']),
         "consoleErrors": errors,

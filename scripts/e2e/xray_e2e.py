@@ -68,7 +68,10 @@ def pct(xs, p):
 
 
 def one_turn(page, persona, text):
-    page.goto(f"{BASE}/?e2e={time.time_ns()}")  # sesi baru per giliran
+    # Sesi baru per giliran: UI menyimpan id sesi di sessionStorage (ui/src/App.tsx) -> hapus dulu.
+    page.goto(f"{BASE}/")
+    page.evaluate("() => sessionStorage.removeItem('mmk_session_id')")
+    page.reload()
     page.wait_for_selector(".wa-input-row input", timeout=30000)
     page.wait_for_function("() => !document.querySelector('.wa-subtitle')?.innerText.includes('menyambungkan')", timeout=30000)
     if not page.locator("[data-testid='xray-panel']").count():
@@ -117,8 +120,12 @@ def main():
             cards = page.locator(".xray-node").count()
             page.locator(".xray-node[data-node='tools'] .xr-card-head").click()
             tools_detail = page.locator(".xray-node[data-node='tools']").inner_text()
+            # Verifikasi embedding Workers AI bge-m3 (pengganti embedding Kenari PAYG): metode harus
+            # "vektor" (bukan "BM25 (fallback)") + 3 skor teratas dicatat untuk dibandingkan.
+            rag_method = "vektor" if "rag · vektor" in tools_detail.lower() else ("bm25" if "bm25" in tools_detail.lower() else "none")
+            top_scores = page.locator(".xray-node[data-node='tools'] .xr-docs tr").all_inner_texts()[:3]
             leaked = [f for v in versions for f in FORBIDDEN if f.lower() in v.lower() and not (f == "MMK-100002" and gid == "g04_majelis_verify")]
-            r = {"id": gid, "first_visible_ms": first_ms, "done_ms": done_ms, **meta, "intent_ok": expect is None or meta.get("intent") == expect, "xray_cards": cards, "tools_has_technique": "Teknik" in tools_detail, "tools_has_rag": "RAG" in tools_detail, "versions": len(versions), "streamed": len(versions) > 1, "leaked": leaked}
+            r = {"id": gid, "first_visible_ms": first_ms, "done_ms": done_ms, **meta, "intent_ok": expect is None or meta.get("intent") == expect, "xray_cards": cards, "tools_has_technique": "teknik" in tools_detail.lower(), "tools_has_rag": "rag" in tools_detail.lower(), "rag_method": rag_method, "rag_top3": top_scores, "versions": len(versions), "streamed": len(versions) > 1, "leaked": leaked}
             results.append(r)
             print(json.dumps(r))
             if gid == "g02_telat_informal":
@@ -145,6 +152,7 @@ def main():
         "done_ms": {"p50": pct([r["done_ms"] for r in g], 50), "p95": pct([r["done_ms"] for r in g], 95)},
         "server_first_ms": {"p50": pct([r.get("server_first_ms") for r in g], 50), "p95": pct([r.get("server_first_ms") for r in g], 95)},
         "intent_ok": f"{sum(r['intent_ok'] for r in g)}/{len(g)}",
+        "rag_vector_turns": f"{sum(r.get('rag_method') == 'vektor' for r in g)}/{len(g)}",
         "leaks": [r for r in results if r["leaked"]],
         "console_errors": errors,
         "results": results,

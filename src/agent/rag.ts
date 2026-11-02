@@ -94,10 +94,21 @@ function tokenize(text: string): string[] {
     .map(stem);
 }
 
-// Stemming sangat ringan Bahasa Indonesia (akhiran umum) — cukup untuk "angsuran"/"angsurannya".
+// Stemming sangat ringan Bahasa Indonesia: akhiran umum + awalan me-/ber-/di-/ter-/pe- (kata >= 6
+// huruf), cukup untuk "membayar"~"bayar", "angsurannya"~"angsuran", "keterlambatan"~"terlambat".
 function stem(t: string): string {
-  return t.replace(/(nya|lah|kah|pun)$/, "").replace(/(kan|an|i)$/, (m, _g, off) => (off > 4 ? "" : m));
+  let w = t.replace(/(nya|lah|kah|pun)$/, "");
+  if (w.length >= 6) w = w.replace(/^(meng|meny|mem|men|me|ber|be|di|ter|per|pem|pen|ke)/, "");
+  return w.replace(/(kan|an|i)$/, (m, _g, off) => (off > 4 ? "" : m));
 }
+
+/** Ekspansi kueri berbasis intent (aturan): kosakata dokumen kebijakan yang relevan ditambahkan ke kueri. */
+export const INTENT_QUERY_EXPANSION: Partial<Record<string, string>> = {
+  keterlambatan: "keterlambatan restrukturisasi kesulitan membayar angsuran",
+  pengaduan: "pengaduan SOP tindak lanjut",
+  hak_data: "hak subjek data pribadi UU PDP",
+  pengajuan: "pengajuan pinjaman syarat petugas lapangan",
+};
 
 const DOCS = KB_CHUNKS.map((c) => ({ c, toks: tokenize(`${c.heading} ${c.text}`) }));
 const AVGDL = DOCS.reduce((s, d) => s + d.toks.length, 0) / Math.max(1, DOCS.length);

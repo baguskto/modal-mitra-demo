@@ -31,7 +31,7 @@ import { salvageJsonTail, FALLBACK_NOT_FOUND } from "../guards/output";
 import { StreamGuard, type GuardBlockReason } from "../guards/streamGuard";
 import { classifyIntent, detectHitl, type Intent, type Persona } from "./router";
 import { classifyIntentFast, type LlmIntentResult } from "./classify";
-import { retrieve, formatChunksAsContext, type RetrievalResult } from "./rag";
+import { retrieve, formatChunksAsContext, INTENT_QUERY_EXPANSION, type RetrievalResult } from "./rag";
 import { buildSystemPrompt, buildUserTurn, buildToolResultTurn, buildStreamingAnswerTurn } from "./prompts";
 import { callChatModel, streamChatModel, type ChatMessage } from "./llm";
 import { TOOL_REGISTRY, normalizeToolArgs, normalizeBirthDate, type ToolName } from "../tools/schemas";
@@ -131,6 +131,7 @@ interface RunBag {
   firstTokenAt?: number;
   auditQ: Promise<unknown>;
   ragDetail?: Record<string, unknown>;
+  queryExpansion?: string;
   budget: WorkersAiBudget;
 }
 
@@ -295,8 +296,11 @@ async function nodeGuardIn(state: State, config: any): Promise<Partial<State>> {
     lgSpan?.end({ blocked: lg.blocked, layer: lg.blocked ? "llama_guard" : undefined, technique: techs(TECH.llamaGuard, TECH.parallel), calls: [call], guards: [rule], note: "berjalan paralel dengan RAG & LLM; teks pertama dan aksi tulis menunggu verdict ini" }, lg.blocked ? "WARNING" : "DEFAULT");
     return lg;
   });
-  bag.retrieval = retrieve(env.AI, env.VECTORIZE, env.EMBED_MODEL, redacted);
   const ruleIntent = classifyIntent(state.userText, state.persona as Persona);
+  // Ekspansi kueri dari intent aturan: pesan informal ("blm bisa bayar") jarang memakai kosakata dokumen.
+  const expansion = INTENT_QUERY_EXPANSION[ruleIntent];
+  bag.retrieval = retrieve(env.AI, env.VECTORIZE, env.EMBED_MODEL, expansion ? `${redacted}\n${expansion}` : redacted);
+  bag.queryExpansion = expansion;
   if (ruleIntent === "lain" && redacted.trim().split(/\s+/).length >= 4) {
     bag.llmIntent = classifyIntentFast(env.AI, env.KENARI_API_KEY, redacted, env.KENARI_CHAT_MODEL, INTENT_LLM_BUDGET_MS);
   }
@@ -513,6 +517,7 @@ async function nodeTools(state: State, config: any): Promise<Partial<State>> {
     // Bukan teks kueri (review Opus P2: nama/alamat/tanggal format tak dikenal bisa lolos redaksi) —
     // hanya panjang + jenis token redaksi yang ada.
     query: `pesan teredaksi (${state.redacted.length} karakter${(state.redacted.match(/\[[A-Z_]+_\d+\]/g) ?? []).length ? `, token: ${[...new Set((state.redacted.match(/\[([A-Z_]+)_\d+\]/g) ?? []).map((t) => t.replace(/_\d+\]$/, "]")))].join(" ")}` : ""})`,
+    expansion: bag.queryExpansion ? `+ "${bag.queryExpansion}" (intent ${state.intent})` : undefined,
     embedMs: rag.embedMs,
     queryMs: rag.queryMs,
     ms: rag.ms,

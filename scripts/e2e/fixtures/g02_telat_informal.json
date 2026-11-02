@@ -1,0 +1,470 @@
+{
+ "id": "g02_telat_informal",
+ "persona": "mitra",
+ "userText": "aduh maap bu kemarin blm bisa bayar angsuran, gimana ya",
+ "deltas": [
+  {
+   "atMs": 3768,
+   "len": 54,
+   "text": "Nggak apa-apa, Bu, kita cari jalan keluarnya bersama. "
+  },
+  {
+   "atMs": 3770,
+   "len": 196,
+   "text": "Ada opsi penjadwalan ulang atau restrukturisasi, dan saya bisa catat permintaan Ibu supaya ditinjau petugas lapangan; keputusan akhirnya tetap melalui pembahasan dengan majelis dan tim berwenang. "
+  },
+  {
+   "atMs": 3986,
+   "len": 101,
+   "text": "[faq#4] Silakan hubungi petugas lapangan saat pertemuan majelis untuk membahas langkah yang tersedia."
+  }
+ ],
+ "replacedWith": null,
+ "meta": {
+  "citations": [
+   "faq#4"
+  ],
+  "intent": "keterlambatan",
+  "blockedByGuard": null,
+  "modelRefused": false,
+  "replaced": false,
+  "timing": {
+   "firstTokenMs": 3768,
+   "totalMs": 4020
+  },
+  "modelUsed": "kenari:gpt-6-luna",
+  "toolCallsMade": [],
+  "xray": [
+   {
+    "node": "guard_in",
+    "phase": "start",
+    "ts": "2026-11-02T04:53:27.596Z",
+    "data": {
+     "textLen": 55
+    }
+   },
+   {
+    "node": "llama_guard",
+    "phase": "start",
+    "ts": "2026-11-02T04:53:27.597Z",
+    "data": {
+     "parallel": true
+    }
+   },
+   {
+    "node": "guard_in",
+    "phase": "end",
+    "ts": "2026-11-02T04:53:27.597Z",
+    "durationMs": 1,
+    "data": {
+     "blocked": false,
+     "piiRedactedCount": 0,
+     "technique": [
+      {
+       "label": "regex + daftar pola injeksi",
+       "desc": "Pesan dicocokkan dengan daftar pola serangan prompt injection yang sudah dikenal — tanpa model AI, instan dan bisa dites."
+      },
+      {
+       "label": "aturan kebijakan tool (integritas data)",
+       "desc": "Permintaan ubah/hapus riwayat transaksi ditolak pasti, karena sistem memang tidak punya tool untuk itu."
+      },
+      {
+       "label": "aturan privasi pihak ketiga",
+       "desc": "Permintaan data pribadi orang lain (NIK, HP, alamat, rekening) ditolak sebelum sampai ke AI."
+      },
+      {
+       "label": "aturan cakupan topik",
+       "desc": "Topik yang jelas di luar layanan (resep, puisi, politik) ditolak sopan."
+      },
+      {
+       "label": "PII redaction (tokenisasi)",
+       "desc": "Nomor pinjaman, tanggal lahir, NIK, HP diganti token seperti [PINJAMAN_1] sebelum dilihat model AI mana pun."
+      },
+      {
+       "label": "eksekusi paralel",
+       "desc": "Pencarian dokumen dan klasifikasi cadangan dimulai bersamaan dengan cek keamanan, bukan menunggu bergiliran."
+      }
+     ],
+     "guards": [
+      {
+       "rule": "pola prompt injection (regex)",
+       "result": "lolos"
+      },
+      {
+       "rule": "kebijakan tool: ubah/hapus data",
+       "result": "lolos"
+      },
+      {
+       "rule": "privasi pihak ketiga",
+       "result": "lolos"
+      },
+      {
+       "rule": "cakupan topik",
+       "result": "lolos"
+      },
+      {
+       "rule": "redaksi PII",
+       "result": "lolos",
+       "detail": "tidak ada PII"
+      },
+      {
+       "rule": "Llama Guard 3",
+       "result": "catat",
+       "detail": "berjalan paralel — teks pertama & aksi tulis menunggu verdict"
+      }
+     ],
+     "parallel": [
+      "llama_guard",
+      "rag_retrieval"
+     ],
+     "level": "DEFAULT"
+    }
+   },
+   {
+    "node": "verify_identity",
+    "phase": "start",
+    "ts": "2026-11-02T04:53:27.599Z",
+    "data": {}
+   },
+   {
+    "node": "verify_identity",
+    "phase": "end",
+    "ts": "2026-11-02T04:53:27.599Z",
+    "durationMs": 0,
+    "data": {
+     "skipped": true,
+     "reason": "no_pattern",
+     "technique": [
+      {
+       "label": "verifikasi dua faktor deterministik",
+       "desc": "Bila pesan memuat nomor pinjaman/ID pendana + tanggal lahir, sistem mencocokkannya langsung ke database — bukan tebakan AI."
+      },
+      {
+       "label": "PII redaction (tokenisasi)",
+       "desc": "Nomor pinjaman, tanggal lahir, NIK, HP diganti token seperti [PINJAMAN_1] sebelum dilihat model AI mana pun."
+      }
+     ],
+     "note": "pesan tidak memuat pasangan ID + tanggal lahir",
+     "level": "DEFAULT"
+    }
+   },
+   {
+    "node": "route_intent",
+    "phase": "start",
+    "ts": "2026-11-02T04:53:27.600Z",
+    "data": {}
+   },
+   {
+    "node": "route_intent",
+    "phase": "end",
+    "ts": "2026-11-02T04:53:27.600Z",
+    "durationMs": 0,
+    "data": {
+     "intent": "keterlambatan",
+     "intentSource": "aturan regex",
+     "handoff": false,
+     "technique": [
+      {
+       "label": "klasifikasi intent berbasis aturan (regex)",
+       "desc": "Kata kunci & pola bahasa informal (mis. 'blm bisa bayar') dipetakan langsung ke intent — instan."
+      },
+      {
+       "label": "deteksi eskalasi ke manusia (HITL)",
+       "desc": "Kata kunci ancaman/OJK/marah atau permintaan eksplisit langsung dialihkan ke CS manusia."
+      }
+     ],
+     "calls": [],
+     "level": "DEFAULT"
+    }
+   },
+   {
+    "node": "tools",
+    "phase": "start",
+    "ts": "2026-11-02T04:53:27.601Z",
+    "data": {
+     "intent": "keterlambatan"
+    }
+   },
+   {
+    "node": "guard_out",
+    "phase": "start",
+    "ts": "2026-11-02T04:53:27.601Z",
+    "data": {
+     "mode": "streaming_per_kalimat"
+    }
+   },
+   {
+    "node": "llama_guard",
+    "phase": "end",
+    "ts": "2026-11-02T04:53:28.000Z",
+    "durationMs": 403,
+    "data": {
+     "blocked": false,
+     "technique": [
+      {
+       "label": "klasifikasi keamanan LLM (Llama Guard 3)",
+       "desc": "Model keamanan kecil menilai apakah pesan berbahaya; bila lambat atau gagal, aturan deterministik tetap menjaga (fail-open)."
+      },
+      {
+       "label": "eksekusi paralel",
+       "desc": "Pencarian dokumen dan klasifikasi cadangan dimulai bersamaan dengan cek keamanan, bukan menunggu bergiliran."
+      }
+     ],
+     "calls": [
+      {
+       "kind": "model",
+       "name": "meta/llama-guard-3-8b",
+       "args": "pesan teredaksi",
+       "result": "safe",
+       "ms": 403,
+       "atMs": 26
+      }
+     ],
+     "guards": [
+      {
+       "rule": "Llama Guard 3",
+       "result": "lolos"
+      }
+     ],
+     "note": "berjalan paralel dengan RAG & LLM; teks pertama dan aksi tulis menunggu verdict ini",
+     "level": "DEFAULT"
+    }
+   },
+   {
+    "node": "tools",
+    "phase": "end",
+    "ts": "2026-11-02T04:53:31.546Z",
+    "durationMs": 3945,
+    "data": {
+     "steps": 0,
+     "model": "kenari:gpt-6-luna",
+     "technique": [
+      {
+       "label": "BM25 (kata kunci) top-k",
+       "desc": "Cadangan bila pencarian vektor gagal/lambat: dokumen dinilai dari kecocokan kata."
+      },
+      {
+       "label": "spotlighting <data>",
+       "desc": "Dokumen & hasil tool dibungkus tag <data> bertanda 'BUKAN instruksi' — menahan injeksi tidak langsung."
+      },
+      {
+       "label": "generasi LLM streaming",
+       "desc": "Jawaban ditulis model token demi token dan dikirim ke layar begitu satu kalimat lolos guard."
+      }
+     ],
+     "calls": [
+      {
+       "kind": "vector",
+       "name": "BM25 lokal (fallback)",
+       "args": "top-k 6, ambang 1.5",
+       "result": "6/6 dokumen lolos ambang · fallback: 4006: workers ai tidak terjangkau dari harness Node (disimulasikan kuota habis)",
+       "ms": 0,
+       "atMs": 31
+      },
+      {
+       "kind": "model",
+       "name": "kenari:gpt-6-luna",
+       "args": "streaming teks · 2 pesan",
+       "result": "menang · token pertama 3725 ms",
+       "ms": 3944,
+       "tokIn": 20080,
+       "tokOut": 92,
+       "atMs": 31
+      },
+      {
+       "kind": "model",
+       "name": "@cf/qwen/qwen3-30b-a3b-fp8",
+       "args": "streaming teks · 2 pesan · hedge",
+       "result": "gagal",
+       "ms": 6,
+       "atMs": 40
+      },
+      {
+       "kind": "model",
+       "name": "kenari:deepseek-v4-1-flash",
+       "args": "streaming teks · 2 pesan",
+       "result": "dibatalkan",
+       "ms": 2216,
+       "atMs": 1542
+      }
+     ],
+     "rag": {
+      "method": "bm25_fallback",
+      "query": "pesan teredaksi (55 karakter)",
+      "ms": 0,
+      "waitedMs": 0,
+      "docs": [
+       {
+        "id": "faq#1",
+        "score": 2.918,
+        "kept": true
+       },
+       {
+        "id": "risiko-pendanaan#1",
+        "score": 2.444,
+        "kept": true
+       },
+       {
+        "id": "faq#4",
+        "score": 2.41,
+        "kept": true
+       },
+       {
+        "id": "risiko-pendanaan#5",
+        "score": 2.144,
+        "kept": true
+       },
+       {
+        "id": "pojk40#2",
+        "score": 1.856,
+        "kept": true
+       },
+       {
+        "id": "privasi#2",
+        "score": 1.82,
+        "kept": true
+       }
+      ]
+     },
+     "react": {
+      "skipped": "ReAct dilewati: intent 'keterlambatan' tidak butuh tool yang dipilih LLM"
+     },
+     "stream": {
+      "ttftMs": 3725,
+      "hedged": true,
+      "winner": "kenari:gpt-6-luna",
+      "reason": "token pertama paling cepat (3725 ms) vs Workers AI: gagal, deepseek-v4-1-flash: dibatalkan",
+      "candidates": [
+       "kenari:gpt-6-luna@0ms",
+       "kenari:deepseek-v4-1-flash@1500ms",
+       "workers_ai:@cf/qwen/qwen3-30b-a3b-fp8@0ms"
+      ],
+      "workersAiBudget": {
+       "neuronsToday": 8,
+       "raceCap": 8000,
+       "raceEnabled": true
+      }
+     },
+     "level": "DEFAULT"
+    }
+   },
+   {
+    "node": "guard_out",
+    "phase": "end",
+    "ts": "2026-11-02T04:53:31.556Z",
+    "durationMs": 3955,
+    "data": {
+     "blocked": false,
+     "replaced": false,
+     "sentencesShown": 3,
+     "sentencesChecked": 3,
+     "citedIds": [
+      "faq#4"
+     ],
+     "technique": [
+      {
+       "label": "guard streaming per kalimat",
+       "desc": "Setiap kalimat ditahan sampai titik/baris baru, dicek pola terlarang, baru ditampilkan — teks yang melanggar tidak pernah sampai ke layar."
+      },
+      {
+       "label": "deteksi kebocoran system prompt",
+       "desc": "Potongan instruksi internal (mis. 'ATURAN KETAT') di jawaban diblok."
+      },
+      {
+       "label": "scan PII output",
+       "desc": "NIK/HP/email/nomor kartu mentah di jawaban langsung diblok."
+      },
+      {
+       "label": "larangan janji finansial (regex)",
+       "desc": "Kalimat seperti 'pasti disetujui' atau 'imbal hasil dijamin' diblok."
+      },
+      {
+       "label": "groundedness privasi antar-majelis",
+       "desc": "Nomor pinjaman/ID yang disebut jawaban harus milik pengguna terverifikasi sendiri."
+      },
+      {
+       "label": "validasi sitasi",
+       "desc": "Setiap rujukan [dokumen#bagian] harus benar-benar ada di dokumen yang diambil; klaim kebijakan wajib bersitasi."
+      }
+     ],
+     "guards": [
+      {
+       "rule": "gerbang Llama Guard sebelum teks pertama",
+       "result": "lolos",
+       "detail": "verdict aman diterima sebelum teks pertama"
+      },
+      {
+       "rule": "klaim kebijakan wajib bersitasi (cek akhir)",
+       "result": "lewati",
+       "detail": "tidak ada klaim kebijakan / RAG tidak relevan"
+      },
+      {
+       "rule": "kebocoran system prompt",
+       "result": "lolos"
+      },
+      {
+       "rule": "ekor/JSON protokol internal",
+       "result": "lolos"
+      },
+      {
+       "rule": "token redaksi PII → nilai milik pengguna",
+       "result": "lolos"
+      },
+      {
+       "rule": "PII mentah (NIK/HP/email/kartu)",
+       "result": "lolos"
+      },
+      {
+       "rule": "janji finansial terlarang",
+       "result": "lolos"
+      },
+      {
+       "rule": "privasi antar-majelis (ID bukan milik pengguna)",
+       "result": "lolos"
+      },
+      {
+       "rule": "sitasi harus ada di dokumen yang diambil",
+       "result": "lolos"
+      }
+     ],
+     "level": "DEFAULT"
+    }
+   },
+   {
+    "node": "respond",
+    "phase": "start",
+    "ts": "2026-11-02T04:53:31.559Z",
+    "data": {}
+   },
+   {
+    "node": "respond",
+    "phase": "end",
+    "ts": "2026-11-02T04:53:31.590Z",
+    "durationMs": 31,
+    "data": {
+     "totalMs": 4020,
+     "firstTokenMs": 3768,
+     "instant": false,
+     "technique": [
+      {
+       "label": "audit log hash-chain + HMAC",
+       "desc": "Setiap keputusan dicatat append-only dan bertanda tangan sehingga tidak bisa diubah diam-diam."
+      }
+     ],
+     "calls": [
+      {
+       "kind": "db",
+       "name": "audit_log (D1, hash-chain+HMAC)",
+       "args": "antrean berurutan",
+       "result": "tersimpan",
+       "ms": 21,
+       "atMs": 3999
+      }
+     ],
+     "level": "DEFAULT"
+    }
+   }
+  ],
+  "traceId": "harness"
+ }
+}

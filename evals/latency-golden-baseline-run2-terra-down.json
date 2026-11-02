@@ -1,0 +1,257 @@
+{
+  "impl": "baseline",
+  "hedgeModel": null,
+  "measuredAt": "2026-11-02T04:59:47.715Z",
+  "env": {
+    "D1_LATENCY_MS": 8,
+    "AI_GUARD_SIM_MS": 400,
+    "workersAi": "stub (tidak terjangkau dari Node)",
+    "retrieval": "BM25 lokal (kedua implementasi)"
+  },
+  "n": 10,
+  "firstTokenMs": {
+    "p50": 1067,
+    "p95": 1730,
+    "min": 912,
+    "max": 1730
+  },
+  "totalMs": {
+    "p50": 1067,
+    "p95": 1730,
+    "min": 912,
+    "max": 1730
+  },
+  "phaseP50": {
+    "guard_in": 402,
+    "verify_identity": 0,
+    "route_intent": 0,
+    "tools": 610,
+    "guard_out": 0,
+    "respond": 20
+  },
+  "intentAccuracy": "9/10",
+  "rows": [
+    {
+      "id": "g01_biaya_jasa",
+      "rep": 0,
+      "intent": "info",
+      "intentOk": true,
+      "model": "none",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 1067,
+      "totalMs": 1067,
+      "wallMs": 1081,
+      "streamedChunks": 0,
+      "phases": {
+        "guard_in": 405,
+        "verify_identity": 1,
+        "route_intent": 1,
+        "tools": 610,
+        "guard_out": 1,
+        "respond": 21
+      },
+      "answer": "Maaf, saya tidak menemukan informasi yang pasti untuk pertanyaan ini di basis pengetahuan resmi. Agar tidak memberi informasi yang salah, sa"
+    },
+    {
+      "id": "g02_telat_informal",
+      "rep": 0,
+      "intent": "lain",
+      "intentOk": false,
+      "model": "none",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 1730,
+      "totalMs": 1730,
+      "wallMs": 1734,
+      "streamedChunks": 0,
+      "phases": {
+        "guard_in": 402,
+        "verify_identity": 0,
+        "route_intent": 0,
+        "tools": 1293,
+        "guard_out": 1,
+        "respond": 21
+      },
+      "answer": "Maaf, saya tidak menemukan informasi yang pasti untuk pertanyaan ini di basis pengetahuan resmi. Agar tidak memberi informasi yang salah, sa"
+    },
+    {
+      "id": "g03_verify_angsuran",
+      "rep": 0,
+      "intent": "akun",
+      "intentOk": true,
+      "model": "none",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 1016,
+      "totalMs": 1016,
+      "wallMs": 1017,
+      "streamedChunks": 0,
+      "phases": {
+        "guard_in": 423,
+        "verify_identity": 0,
+        "route_intent": 0,
+        "tools": 557,
+        "guard_out": 1,
+        "respond": 21
+      },
+      "answer": "Maaf, saya tidak menemukan informasi yang pasti untuk pertanyaan ini di basis pengetahuan resmi. Agar tidak memberi informasi yang salah, sa"
+    },
+    {
+      "id": "g04_majelis_verify",
+      "rep": 0,
+      "intent": "akun",
+      "intentOk": true,
+      "model": "none",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 1289,
+      "totalMs": 1289,
+      "wallMs": 1292,
+      "streamedChunks": 0,
+      "phases": {
+        "guard_in": 422,
+        "verify_identity": 0,
+        "route_intent": 0,
+        "tools": 830,
+        "guard_out": 0,
+        "respond": 20
+      },
+      "answer": "Maaf, saya tidak menemukan informasi yang pasti untuk pertanyaan ini di basis pengetahuan resmi. Agar tidak memberi informasi yang salah, sa"
+    },
+    {
+      "id": "g05_pendana_portofolio",
+      "rep": 0,
+      "intent": "akun",
+      "intentOk": true,
+      "model": "none",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 1035,
+      "totalMs": 1035,
+      "wallMs": 1038,
+      "streamedChunks": 0,
+      "phases": {
+        "guard_in": 421,
+        "verify_identity": 0,
+        "route_intent": 0,
+        "tools": 578,
+        "guard_out": 1,
+        "respond": 19
+      },
+      "answer": "Maaf, saya tidak menemukan informasi yang pasti untuk pertanyaan ini di basis pengetahuan resmi. Agar tidak memberi informasi yang salah, sa"
+    },
+    {
+      "id": "g06_imbal_hasil",
+      "rep": 0,
+      "intent": "info",
+      "intentOk": true,
+      "model": "none",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 1017,
+      "totalMs": 1017,
+      "wallMs": 1018,
+      "streamedChunks": 0,
+      "phases": {
+        "guard_in": 402,
+        "verify_identity": 0,
+        "route_intent": 0,
+        "tools": 578,
+        "guard_out": 0,
+        "respond": 20
+      },
+      "answer": "Maaf, saya tidak menemukan informasi yang pasti untuk pertanyaan ini di basis pengetahuan resmi. Agar tidak memberi informasi yang salah, sa"
+    },
+    {
+      "id": "g07_syarat_pengajuan",
+      "rep": 0,
+      "intent": "pengajuan",
+      "intentOk": true,
+      "model": "none",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 912,
+      "totalMs": 912,
+      "wallMs": 913,
+      "streamedChunks": 0,
+      "phases": {
+        "guard_in": 402,
+        "verify_identity": 0,
+        "route_intent": 0,
+        "tools": 479,
+        "guard_out": 0,
+        "respond": 20
+      },
+      "answer": "Maaf, saya tidak menemukan informasi yang pasti untuk pertanyaan ini di basis pengetahuan resmi. Agar tidak memberi informasi yang salah, sa"
+    },
+    {
+      "id": "g08_sla_pengaduan",
+      "rep": 0,
+      "intent": "pengaduan",
+      "intentOk": true,
+      "model": "none",
+      "blockedByGuard": null,
+      "tools": [
+        "create_complaint_ticket"
+      ],
+      "firstTokenMs": 1599,
+      "totalMs": 1599,
+      "wallMs": 1600,
+      "streamedChunks": 0,
+      "phases": {
+        "guard_in": 403,
+        "verify_identity": 0,
+        "route_intent": 60,
+        "tools": 1066,
+        "guard_out": 33,
+        "respond": 21
+      },
+      "answer": "Maaf, saya tidak menemukan informasi yang pasti untuk pertanyaan ini di basis pengetahuan resmi. Agar tidak memberi informasi yang salah, sa"
+    },
+    {
+      "id": "g09_keringanan_janji",
+      "rep": 0,
+      "intent": "keterlambatan",
+      "intentOk": true,
+      "model": "none",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 1157,
+      "totalMs": 1157,
+      "wallMs": 1160,
+      "streamedChunks": 0,
+      "phases": {
+        "guard_in": 401,
+        "verify_identity": 0,
+        "route_intent": 0,
+        "tools": 721,
+        "guard_out": 0,
+        "respond": 20
+      },
+      "answer": "Maaf, saya tidak menemukan informasi yang pasti untuk pertanyaan ini di basis pengetahuan resmi. Agar tidak memberi informasi yang salah, sa"
+    },
+    {
+      "id": "g10_sapaan_umum",
+      "rep": 0,
+      "intent": "lain",
+      "intentOk": true,
+      "model": "none",
+      "blockedByGuard": null,
+      "tools": [],
+      "firstTokenMs": 1079,
+      "totalMs": 1079,
+      "wallMs": 1082,
+      "streamedChunks": 0,
+      "phases": {
+        "guard_in": 402,
+        "verify_identity": 0,
+        "route_intent": 0,
+        "tools": 639,
+        "guard_out": 0,
+        "respond": 22
+      },
+      "answer": "Maaf, saya tidak menemukan informasi yang pasti untuk pertanyaan ini di basis pengetahuan resmi. Agar tidak memberi informasi yang salah, sa"
+    }
+  ]
+}
